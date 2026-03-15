@@ -1,7 +1,9 @@
-from flask import Flask, render_template_string, request, redirect, url_for, flash
+from flask import Flask, render_template_string, request, redirect, url_for, flash, session, send_file
 import openpyxl
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 from collections import defaultdict
-import re
+import re, io, json, base64
 
 app = Flask(__name__)
 app.secret_key = "basketkolcz2025"
@@ -622,6 +624,23 @@ def upload():
         stats_a = parse_team_sheet(wb[name_a])
         stats_b = parse_team_sheet(wb[name_b]) if name_b else None
 
+        # Zapisz dane do sesji dla eksportu
+        session['name_a'] = name_a
+        session['name_b'] = name_b
+        session['suma_a'] = json.dumps(dict(suma_quarters(stats_a)))
+        session['suma_b'] = json.dumps(dict(suma_quarters(stats_b))) if stats_b else None
+        session['kpi_a']  = json.dumps(calc_kpi(suma_quarters(stats_a)))
+        session['kpi_b']  = json.dumps(calc_kpi(suma_quarters(stats_b))) if stats_b else None
+        # Dane per kwarta
+        session['quarters_a'] = json.dumps({str(q): dict(stats_a["quarter"].get(q,{})) for q in [1,2,3,4]})
+        session['quarters_b'] = json.dumps({str(q): dict(stats_b["quarter"].get(q,{})) for q in [1,2,3,4]}) if stats_b else None
+        # Zawodnicy
+        session['players_a'] = json.dumps({str(k): dict(v) for k,v in stats_a["players"].items()})
+        session['players_b'] = json.dumps({str(k): dict(v) for k,v in stats_b["players"].items()}) if stats_b else None
+        # Shot timing
+        session['timing_a'] = json.dumps({b: stats_a["timing"][b] for b in BUCKETS})
+        session['timing_b'] = json.dumps({b: stats_b["timing"][b] for b in BUCKETS}) if stats_b else None
+
         suma_a = suma_quarters(stats_a)
         suma_b = suma_quarters(stats_b) if stats_b else None
         kpi_a  = calc_kpi(suma_a)
@@ -799,6 +818,10 @@ def upload():
       {f'<small style="opacity:.7">{winner} wygrywa</small>' if winner else ''}
     </div>
     <a href="/" class="btn btn-outline-light btn-sm">← Nowy mecz</a>
+    <div class="d-flex gap-2">
+      <a href="/export/xlsx" class="btn btn-warning btn-sm fw-bold">⬇ Excel</a>
+      <a href="/export/pdf" class="btn btn-danger btn-sm fw-bold">⬇ PDF</a>
+    </div>
   </div>
 </div>
 
@@ -841,6 +864,446 @@ if(qc) new Chart(qc, {{
         import traceback
         flash(f"Błąd: {str(e)}", "error")
         return redirect(url_for("index"))
+
+@app.route("/export/xlsx")
+def export_xlsx():
+    try:
+        name_a   = session.get('name_a', 'Drużyna A')
+        name_b   = session.get('name_b', 'Drużyna B')
+        suma_a   = json.loads(session.get('suma_a', '{}'))
+        suma_b   = json.loads(session.get('suma_b', '{}')) if session.get('suma_b') else {}
+        kpi_a    = json.loads(session.get('kpi_a',  '{}'))
+        kpi_b    = json.loads(session.get('kpi_b',  '{}')) if session.get('kpi_b') else {}
+        quarters_a = json.loads(session.get('quarters_a', '{}'))
+        quarters_b = json.loads(session.get('quarters_b', '{}')) if session.get('quarters_b') else {}
+        players_a  = json.loads(session.get('players_a', '{}'))
+        players_b  = json.loads(session.get('players_b', '{}')) if session.get('players_b') else {}
+
+        wb = openpyxl.Workbook()
+
+        # Style
+        HDR = PatternFill("solid", fgColor="1A2B4A")
+        HDR_F = Font(color="FFFFFF", bold=True, size=10)
+        SUB = PatternFill("solid", fgColor="E8F0FB")
+        SUB_F = Font(bold=True, size=10, color="1A2B4A")
+        GREEN_F = Font(bold=True, color="1A6B3C")
+        RED_F   = Font(bold=True, color="8B1A1A")
+        CTR = Alignment(horizontal="center", vertical="center")
+        BORDER = Border(
+            bottom=Side(style="thin", color="CCCCCC"),
+            right=Side(style="thin", color="CCCCCC")
+        )
+
+        def set_hdr(ws, row, cols, labels):
+            for i, lbl in enumerate(labels):
+                c = ws.cell(row=row, column=cols+i, value=lbl)
+                c.fill = HDR; c.font = HDR_F; c.alignment = CTR
+
+        def style_row(ws, row, col_start, col_end, alt=False):
+            fill = PatternFill("solid", fgColor="F5F8FF") if alt else None
+            for col in range(col_start, col_end+1):
+                c = ws.cell(row=row, column=col)
+                c.border = BORDER; c.alignment = CTR
+                if fill: c.fill = fill
+
+        # ── Arkusz 1: OGÓLNE ──────────────────────────────────────────────────
+        ws1 = wb.active; ws1.title = "OGÓLNE"
+        ws1.column_dimensions['A'].width = 22
+        for col in ['B','C','D','E','F','G','H','I','J','K','L']:
+            ws1.column_dimensions[col].width = 12
+
+        # Nagłówek meczu
+        ws1.merge_cells('A1:L1')
+        t = ws1['A1']; t.value = f"RAPORT MECZOWY — {name_a} vs {name_b}"
+        t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=13)
+        t.alignment = CTR
+
+        # Wynik
+        score_a = suma_a.get('pts', 0); score_b = suma_b.get('pts', 0)
+        ws1['A2'] = "Wynik:"; ws1['A2'].font = Font(bold=True)
+        ws1['B2'] = f"{score_a} : {score_b}"; ws1['B2'].font = Font(bold=True, size=13, color="1A2B4A")
+
+        # Nagłówki tabeli
+        row = 4
+        set_hdr(ws1, row, 1, ["Metryka",
+            name_a+" PKT", name_a+" POSS", name_a+" eFG%", name_a+" TS%", name_a+" ORtg", name_a+" PPP",
+            name_b+" PKT", name_b+" POSS", name_b+" eFG%", name_b+" TS%", name_b+" ORtg", name_b+" PPP"])
+        ws1.row_dimensions[row].height = 22
+
+        metrics = [
+            ("Łącznie", suma_a, suma_b, kpi_a, kpi_b),
+        ]
+        for qn in ["1","2","3","4"]:
+            qa = quarters_a.get(qn, {}); qb = quarters_b.get(qn, {})
+            metrics.append((f"Kwarta {qn}", qa, qb, calc_kpi(qa), calc_kpi(qb)))
+
+        for i, (lbl, sa, sb, ka, kb) in enumerate(metrics):
+            r = row + 1 + i
+            ws1.cell(r, 1, lbl).font = Font(bold=True)
+            ws1.cell(r, 2, sa.get('pts',0))
+            ws1.cell(r, 3, sa.get('poss',0))
+            ws1.cell(r, 4, ka.get('efg','-'))
+            ws1.cell(r, 5, ka.get('ts','-'))
+            ws1.cell(r, 6, ka.get('ortg','-'))
+            ws1.cell(r, 7, ka.get('ppp','-'))
+            ws1.cell(r, 8, sb.get('pts',0))
+            ws1.cell(r, 9, sb.get('poss',0))
+            ws1.cell(r,10, kb.get('efg','-'))
+            ws1.cell(r,11, kb.get('ts','-'))
+            ws1.cell(r,12, kb.get('ortg','-'))
+            ws1.cell(r,13, kb.get('ppp','-'))
+            style_row(ws1, r, 1, 13, i%2==1)
+            # Podświetl wygraną
+            try:
+                if int(sa.get('pts',0)) > int(sb.get('pts',0)):
+                    ws1.cell(r,2).font = GREEN_F
+                elif int(sb.get('pts',0)) > int(sa.get('pts',0)):
+                    ws1.cell(r,8).font = RED_F
+            except: pass
+
+        # ── Arkusz 2: ZAWODNICY ───────────────────────────────────────────────
+        for team_name, players in [(name_a, players_a), (name_b, players_b)]:
+            if not players: continue
+            ws = wb.create_sheet(f"ZAWODNICY {team_name[:8]}")
+            ws.column_dimensions['A'].width = 8
+            for col in ['B','C','D','E','F','G','H','I','J','K','L','M']:
+                ws.column_dimensions[col].width = 10
+
+            ws.merge_cells('A1:M1')
+            t = ws['A1']; t.value = f"STATYSTYKI ZAWODNIKÓW — {team_name}"
+            t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=12); t.alignment = CTR
+
+            hdrs = ["#","PTS","2PM","2PA","2P%","3PM","3PA","3P%","FTM","FTA","FT%","eFG%","TS%","AST","OREB","DREB","BR","FD","Wykończenia"]
+            ws.column_dimensions['A'].width = 6
+            for j,h in enumerate(hdrs):
+                c = ws.cell(2, j+1, h)
+                c.fill = HDR; c.font = HDR_F; c.alignment = CTR
+                ws.column_dimensions[get_column_letter(j+1)].width = 9
+
+            for i, (pid, pd) in enumerate(sorted(players.items(), key=lambda x: int(x[0]) if str(x[0]).isdigit() else 99)):
+                r = 3 + i
+                pts = pd.get('2pm',0)*2 + pd.get('3pm',0)*3 + pd.get('ftm',0)
+                pa2 = pd.get('2pa',0); pm2 = pd.get('2pm',0)
+                pa3 = pd.get('3pa',0); pm3 = pd.get('3pm',0)
+                fta = pd.get('fta',0); ftm = pd.get('ftm',0)
+                fga = pa2+pa3
+                efg = f"{(pm2+1.5*pm3)/fga:.1%}" if fga else "-"
+                ts  = f"{pts/(2*(fga+0.44*fta)):.1%}" if (fga+fta) else "-"
+                p2  = f"{pm2/pa2:.1%}" if pa2 else "-"
+                p3  = f"{pm3/pa3:.1%}" if pa3 else "-"
+                ft  = f"{ftm/fta:.1%}" if fta else "-"
+                vals = [pid, pts, pm2, pa2, p2, pm3, pa3, p3, ftm, fta, ft, efg, ts,
+                        pd.get('ast',0), pd.get('oreb',0), pd.get('dreb',0),
+                        pd.get('br',0), pd.get('fd',0), pd.get('finishes',0)]
+                for j, v in enumerate(vals):
+                    c = ws.cell(r, j+1, v); c.alignment = CTR; c.border = BORDER
+                    if j==1 and pts > 0: c.font = Font(bold=True, color="1A2B4A")
+                if i%2==1:
+                    for col in range(1, len(vals)+1):
+                        ws.cell(r, col).fill = PatternFill("solid", fgColor="F5F8FF")
+
+        # ── Arkusz 3: SHOT TIMING ─────────────────────────────────────────────
+        wst = wb.create_sheet("SHOT TIMING")
+        wst.column_dimensions['A'].width = 14
+        for col in ['B','C','D','E','F','G','H']:
+            wst.column_dimensions[col].width = 13
+
+        wst.merge_cells('A1:H1')
+        t = wst['A1']; t.value = "SHOT TIMING — czas posiadania a skuteczność"
+        t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=12); t.alignment = CTR
+
+        set_hdr(wst, 2, 1, ["Czas", f"{name_a} 2PT", f"{name_a} 3PT", f"{name_a} Eff%",
+                             f"{name_b} 2PT", f"{name_b} 3PT", f"{name_b} Eff%", "Różnica Eff%"])
+
+        timing_a = json.loads(session.get('timing_a', '{}')) if session.get('timing_a') else {}
+        timing_b = json.loads(session.get('timing_b', '{}')) if session.get('timing_b') else {}
+
+        for i, b in enumerate(BUCKETS):
+            r = 3 + i
+            wst.cell(r, 1, b).font = Font(bold=True)
+            ta = timing_a.get(b, {"2PT":{"made":0,"miss":0},"3PT":{"made":0,"miss":0}})
+            tb = timing_b.get(b, {"2PT":{"made":0,"miss":0},"3PT":{"made":0,"miss":0}})
+            m2a=ta["2PT"]["made"]; miss2a=ta["2PT"]["miss"]
+            m3a=ta["3PT"]["made"]; miss3a=ta["3PT"]["miss"]
+            m2b=tb["2PT"]["made"]; miss2b=tb["2PT"]["miss"]
+            m3b=tb["3PT"]["made"]; miss3b=tb["3PT"]["miss"]
+            att_a2=m2a+miss2a; att_a3=m3a+miss3a
+            att_b2=m2b+miss2b; att_b3=m3b+miss3b
+            tot_a=m2a+m3a; tot_att_a=att_a2+att_a3
+            tot_b=m2b+m3b; tot_att_b=att_b2+att_b3
+            eff_a_val = f"{tot_a/tot_att_a:.0%}" if tot_att_a else "-"
+            eff_b_val = f"{tot_b/tot_att_b:.0%}" if tot_att_b else "-"
+            try:
+                diff = f"{tot_a/tot_att_a - tot_b/tot_att_b:+.0%}" if (tot_att_a and tot_att_b) else "-"
+            except: diff = "-"
+            wst.cell(r,2, f"{m2a}/{att_a2}")
+            wst.cell(r,3, f"{m3a}/{att_a3}")
+            wst.cell(r,4, eff_a_val)
+            wst.cell(r,5, f"{m2b}/{att_b2}")
+            wst.cell(r,6, f"{m3b}/{att_b3}")
+            wst.cell(r,7, eff_b_val)
+            wst.cell(r,8, diff)
+            style_row(wst, r, 1, 8, i%2==1)
+            if eff_a_val != "-" and eff_b_val != "-":
+                try:
+                    if tot_a/tot_att_a > tot_b/tot_att_b:
+                        wst.cell(r,4).font = GREEN_F
+                    elif tot_b/tot_att_b > tot_a/tot_att_a:
+                        wst.cell(r,7).font = RED_F
+                except: pass
+
+        # Zapisz do bufora
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        filename = f"raport_{name_a}_vs_{name_b}.xlsx".replace(" ","_")
+        return send_file(buf, as_attachment=True,
+                         download_name=filename,
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+    except Exception as e:
+        flash(f"Błąd eksportu: {str(e)}", "error")
+        return redirect(url_for("index"))
+
+
+@app.route("/export/pdf")
+def export_pdf():
+    try:
+        name_a    = session.get('name_a', 'Drużyna A')
+        name_b    = session.get('name_b', 'Drużyna B')
+        suma_a    = json.loads(session.get('suma_a', '{}'))
+        suma_b    = json.loads(session.get('suma_b', '{}')) if session.get('suma_b') else {}
+        kpi_a     = json.loads(session.get('kpi_a',  '{}'))
+        kpi_b     = json.loads(session.get('kpi_b',  '{}')) if session.get('kpi_b') else {}
+        quarters_a= json.loads(session.get('quarters_a', '{}'))
+        quarters_b= json.loads(session.get('quarters_b', '{}')) if session.get('quarters_b') else {}
+        players_a = json.loads(session.get('players_a', '{}'))
+        players_b = json.loads(session.get('players_b', '{}')) if session.get('players_b') else {}
+        timing_a  = json.loads(session.get('timing_a', '{}')) if session.get('timing_a') else {}
+        timing_b  = json.loads(session.get('timing_b', '{}')) if session.get('timing_b') else {}
+
+        score_a = suma_a.get('pts', 0)
+        score_b = suma_b.get('pts', 0)
+        winner  = name_a if score_a > score_b else (name_b if score_b > score_a else "Remis")
+
+        def row_color(i): return "#f5f8ff" if i%2==0 else "#ffffff"
+        def val(d, k): return d.get(k, '-') if d else '-'
+
+        def kpi_row(lbl, va, vb, desc=""):
+            try:
+                fa = float(str(va).replace('%','').replace('-','0') or 0)
+                fb = float(str(vb).replace('%','').replace('-','0') or 0)
+                sa = "color:#1a6b3c;font-weight:700" if fa>fb else ""
+                sb = "color:#8b1a1a;font-weight:700" if fb>fa else ""
+            except: sa=sb=""
+            return f"<tr><td style='padding:5px 8px;font-size:11px'><b>{lbl}</b><br><span style='color:#aaa;font-size:10px'>{desc}</span></td><td style='text-align:center;{sa};padding:5px'>{va}</td><td style='text-align:center;{sb};padding:5px'>{vb}</td></tr>"
+
+        # Tabela metryk
+        metrics_rows = ""
+        for lbl, va, vb, desc in [
+            ("Punkty",          score_a,                score_b,                "Łączna liczba punktów"),
+            ("Posiadania",      suma_a.get('poss',0),   suma_b.get('poss',0),   "Liczba posiadań"),
+            ("eFG%",            val(kpi_a,'efg'),        val(kpi_b,'efg'),        "Efektywny % rzutów z pola"),
+            ("True Shooting%",  val(kpi_a,'ts'),         val(kpi_b,'ts'),         "Prawdziwy % skuteczności"),
+            ("ORtg",            val(kpi_a,'ortg'),       val(kpi_b,'ortg'),       "Punkty na 100 posiadań"),
+            ("PPP",             val(kpi_a,'ppp'),        val(kpi_b,'ppp'),        "Pkt na posiadanie"),
+            ("2PT%",            val(kpi_a,'p2_pct'),     val(kpi_b,'p2_pct'),     "Skuteczność za 2 pkt"),
+            ("3PT%",            val(kpi_a,'p3_pct'),     val(kpi_b,'p3_pct'),     "Skuteczność za 3 pkt"),
+            ("FT%",             val(kpi_a,'ft_pct'),     val(kpi_b,'ft_pct'),     "Skuteczność rzutów wolnych"),
+            ("Straty (BR)",     suma_a.get('br',0),      suma_b.get('br',0),      "Liczba strat"),
+            ("FT Rate",         val(kpi_a,'ftr'),        val(kpi_b,'ftr'),        "FTA/FGA"),
+        ]:
+            metrics_rows += kpi_row(lbl, va, vb, desc)
+
+        # Tabela per kwarta
+        q_rows = ""
+        for qn in ["1","2","3","4","SUMA"]:
+            key = qn if qn != "SUMA" else None
+            sa = suma_a if key is None else quarters_a.get(qn, {})
+            sb = suma_b if key is None else quarters_b.get(qn, {})
+            ka = calc_kpi(sa); kb = calc_kpi(sb)
+            lbl = f"{qn}Q" if qn != "SUMA" else "SUMA"
+            bold = "font-weight:700;background:#e8f0fb" if qn=="SUMA" else ""
+            q_rows += f"""<tr style="{bold}">
+                <td style='padding:4px 8px;font-weight:600'>{lbl}</td>
+                <td style='text-align:center'>{sa.get('pts',0)}</td>
+                <td style='text-align:center'>{sa.get('2pm',0)}/{sa.get('2pa',0)}</td>
+                <td style='text-align:center'>{ka.get('p2_pct','-')}</td>
+                <td style='text-align:center'>{sa.get('3pm',0)}/{sa.get('3pa',0)}</td>
+                <td style='text-align:center'>{ka.get('p3_pct','-')}</td>
+                <td style='text-align:center'>{sa.get('ftm',0)}/{sa.get('fta',0)}</td>
+                <td style='text-align:center'>{sa.get('br',0)}</td>
+                <td style='text-align:center'>{sa.get('poss',0)}</td>
+                <td style='text-align:center'>{ka.get('efg','-')}</td>
+                <td style='text-align:center'>{ka.get('ortg','-')}</td>
+                <td style='text-align:center'>{sb.get('pts',0)}</td>
+                <td style='text-align:center'>{sb.get('2pm',0)}/{sb.get('2pa',0)}</td>
+                <td style='text-align:center'>{kb.get('p2_pct','-')}</td>
+                <td style='text-align:center'>{sb.get('3pm',0)}/{sb.get('3pa',0)}</td>
+                <td style='text-align:center'>{kb.get('p3_pct','-')}</td>
+                <td style='text-align:center'>{sb.get('ftm',0)}/{sb.get('fta',0)}</td>
+                <td style='text-align:center'>{sb.get('br',0)}</td>
+                <td style='text-align:center'>{sb.get('poss',0)}</td>
+                <td style='text-align:center'>{kb.get('efg','-')}</td>
+                <td style='text-align:center'>{kb.get('ortg','-')}</td>
+            </tr>"""
+
+        # Tabela zawodników
+        def player_table(players, team):
+            if not players: return "<p style='color:#aaa;font-size:11px'>Brak danych zawodników</p>"
+            rows = ""
+            for i,(pid,pd) in enumerate(sorted(players.items(), key=lambda x: int(x[0]) if str(x[0]).isdigit() else 99)):
+                pts=pd.get('2pm',0)*2+pd.get('3pm',0)*3+pd.get('ftm',0)
+                pa2=pd.get('2pa',0); pm2=pd.get('2pm',0)
+                pa3=pd.get('3pa',0); pm3=pd.get('3pm',0)
+                fga=pa2+pa3; fta=pd.get('fta',0); ftm=pd.get('ftm',0)
+                efg=f"{(pm2+1.5*pm3)/fga:.0%}" if fga else "-"
+                ts =f"{pts/(2*(fga+0.44*fta)):.0%}" if (fga+fta) else "-"
+                bg = row_color(i)
+                rows += f"""<tr style='background:{bg};font-size:10px'>
+                    <td style='padding:3px 6px;font-weight:700'>{pid}</td>
+                    <td style='text-align:center;font-weight:700;color:#1a2b4a'>{pts}</td>
+                    <td style='text-align:center'>{pm2}/{pa2}</td>
+                    <td style='text-align:center'>{pm3}/{pa3}</td>
+                    <td style='text-align:center'>{ftm}/{fta}</td>
+                    <td style='text-align:center;font-weight:600'>{efg}</td>
+                    <td style='text-align:center'>{ts}</td>
+                    <td style='text-align:center'>{pd.get('ast',0)}</td>
+                    <td style='text-align:center'>{pd.get('oreb',0)}</td>
+                    <td style='text-align:center'>{pd.get('dreb',0)}</td>
+                    <td style='text-align:center'>{pd.get('br',0)}</td>
+                    <td style='text-align:center'>{pd.get('finishes',0)}</td>
+                </tr>"""
+            return f"""<table style='width:100%;border-collapse:collapse;font-size:10px'>
+                <thead><tr style='background:#1a2b4a;color:#fff'>
+                    <th style='padding:4px 6px'>#</th><th>PTS</th><th>2PM/A</th><th>3PM/A</th>
+                    <th>FTM/A</th><th>eFG%</th><th>TS%</th><th>AST</th>
+                    <th>ORB</th><th>DRB</th><th>BR</th><th>FIN</th>
+                </tr></thead><tbody>{rows}</tbody></table>"""
+
+        # Shot timing tabela
+        tim_rows = ""
+        for i,b in enumerate(BUCKETS):
+            ta=timing_a.get(b,{"2PT":{"made":0,"miss":0},"3PT":{"made":0,"miss":0}})
+            tb=timing_b.get(b,{"2PT":{"made":0,"miss":0},"3PT":{"made":0,"miss":0}})
+            m_a=ta["2PT"]["made"]+ta["3PT"]["made"]; att_a=m_a+ta["2PT"]["miss"]+ta["3PT"]["miss"]
+            m_b=tb["2PT"]["made"]+tb["3PT"]["made"]; att_b=m_b+tb["2PT"]["miss"]+tb["3PT"]["miss"]
+            ea=f"{m_a/att_a:.0%}" if att_a else "-"
+            eb=f"{m_b/att_b:.0%}" if att_b else "-"
+            bg=row_color(i)
+            tim_rows += f"""<tr style='background:{bg};font-size:10px'>
+                <td style='padding:3px 8px;font-weight:700'>{b}</td>
+                <td style='text-align:center'>{m_a}/{att_a}</td>
+                <td style='text-align:center;font-weight:600;color:#1a6b3c'>{ea}</td>
+                <td style='text-align:center'>{m_b}/{att_b}</td>
+                <td style='text-align:center;font-weight:600;color:#8b1a1a'>{eb}</td>
+            </tr>"""
+
+        TH = "style='background:#1a2b4a;color:#fff;padding:4px 6px;font-size:10px;text-align:center'"
+        TH_L = "style='background:#1a2b4a;color:#fff;padding:4px 6px;font-size:10px'"
+
+        html = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  body{{font-family:Arial,sans-serif;margin:0;padding:20px;color:#222;font-size:11px}}
+  h1{{font-size:18px;margin:0}} h2{{font-size:13px;color:#1a2b4a;margin:16px 0 6px}}
+  h3{{font-size:11px;color:#1a2b4a;margin:10px 0 4px;text-transform:uppercase;letter-spacing:.5px}}
+  .hero{{background:#1a2b4a;color:#fff;padding:14px 20px;border-radius:8px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center}}
+  .score{{font-size:28px;font-weight:700;letter-spacing:4px}}
+  table{{width:100%;border-collapse:collapse;margin-bottom:12px}}
+  th{{background:#1a2b4a;color:#fff;padding:4px 6px;font-size:10px}}
+  td{{padding:3px 6px;border-bottom:1px solid #eee;font-size:10px}}
+  .section{{margin-bottom:20px;page-break-inside:avoid}}
+  .two-col{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}
+  @media print{{body{{padding:8px}} .no-print{{display:none}}}}
+  @page{{size:A4;margin:1.5cm}}
+</style>
+</head><body>
+
+<div class="hero">
+  <div>
+    <h1>{name_a} vs {name_b}</h1>
+    <div style='opacity:.7;font-size:11px'>Raport meczowy · Basket Kołcz Analytics</div>
+  </div>
+  <div class="score">{score_a} : {score_b}</div>
+  <div style='font-size:12px;opacity:.8'>{winner}<br>wygrywa</div>
+</div>
+
+<div class="section">
+  <h2>Kluczowe metryki</h2>
+  <table>
+    <thead><tr>
+      <th style='text-align:left'>Metryka</th>
+      <th style='color:#7dffb3'>{name_a}</th>
+      <th style='color:#ffaaaa'>{name_b}</th>
+    </tr></thead>
+    <tbody>{metrics_rows}</tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Statystyki per kwarta</h2>
+  <p style='font-size:9px;color:#aaa'>PKT · 2PM/A · 2P% · 3PM/A · 3P% · FTM/A · BR · POSS · eFG% · ORtg</p>
+  <table>
+    <thead>
+      <tr>
+        <th {TH_L}>Q</th>
+        <th colspan="10" style='background:#1a6b3c;color:#fff;padding:4px;font-size:10px'>{name_a}</th>
+        <th colspan="10" style='background:#8b1a1a;color:#fff;padding:4px;font-size:10px'>{name_b}</th>
+      </tr>
+      <tr>
+        <th {TH_L}>Q</th>
+        {''.join(f'<th {TH}>{h}</th>' for h in ['PKT','2PM/A','2P%','3PM/A','3P%','FTM/A','BR','POSS','eFG%','ORtg'])}
+        {''.join(f'<th {TH}>{h}</th>' for h in ['PKT','2PM/A','2P%','3PM/A','3P%','FTM/A','BR','POSS','eFG%','ORtg'])}
+      </tr>
+    </thead>
+    <tbody>{q_rows}</tbody>
+  </table>
+</div>
+
+<div class="two-col">
+  <div class="section">
+    <h2 style='color:#1a6b3c'>{name_a} — Zawodnicy</h2>
+    {player_table(players_a, name_a)}
+  </div>
+  <div class="section">
+    <h2 style='color:#8b1a1a'>{name_b} — Zawodnicy</h2>
+    {player_table(players_b, name_b)}
+  </div>
+</div>
+
+<div class="section">
+  <h2>Shot Timing</h2>
+  <table style='width:50%'>
+    <thead><tr>
+      <th style='background:#1a2b4a;color:#fff;padding:4px 8px;text-align:left'>Czas</th>
+      <th style='background:#1a6b3c;color:#fff;padding:4px;text-align:center'>{name_a} Celne/Att</th>
+      <th style='background:#1a6b3c;color:#fff;padding:4px;text-align:center'>{name_a} Eff%</th>
+      <th style='background:#8b1a1a;color:#fff;padding:4px;text-align:center'>{name_b} Celne/Att</th>
+      <th style='background:#8b1a1a;color:#fff;padding:4px;text-align:center'>{name_b} Eff%</th>
+    </tr></thead>
+    <tbody>{tim_rows}</tbody>
+  </table>
+</div>
+
+<div style='margin-top:20px;text-align:center;font-size:9px;color:#aaa;border-top:1px solid #eee;padding-top:8px'>
+  Basket Kołcz Analytics · Wygenerowano automatycznie
+</div>
+
+</body></html>"""
+
+        buf = io.BytesIO(html.encode('utf-8'))
+        buf.seek(0)
+        filename = f"raport_{name_a}_vs_{name_b}.html".replace(" ","_")
+        return send_file(buf, as_attachment=True,
+                         download_name=filename,
+                         mimetype='text/html')
+
+    except Exception as e:
+        flash(f"Błąd eksportu PDF: {str(e)}", "error")
+        return redirect(url_for("index"))
+
 
 if __name__ == "__main__":
     app.run(debug=True)
