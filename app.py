@@ -590,7 +590,28 @@ def index():
       <input type="file" id="fup" name="file" accept=".xlsx" class="d-none" onchange="this.form.submit()">
     </div>
   </form>
-  <div class="card mt-3 p-3" style="font-size:.82rem;color:#666">
+
+  <div class="card mt-3 p-3">
+    <div style="font-size:.8rem;font-weight:700;color:#1a2b4a;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.75rem">
+      📥 Pobierz szablony
+    </div>
+    <div class="row g-2">
+      <div class="col-6">
+        <a href="/template/zapis" class="btn btn-outline-primary w-100" style="font-size:.82rem">
+          📝 Zapis meczu<br>
+          <small class="text-muted" style="font-size:.72rem">Pusty arkusz do kodowania</small>
+        </a>
+      </div>
+      <div class="col-6">
+        <a href="/template/szablon" class="btn btn-outline-success w-100" style="font-size:.82rem">
+          📋 Szablon raportu<br>
+          <small class="text-muted" style="font-size:.72rem">Pusty szablon statystyk</small>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mt-2 p-3" style="font-size:.82rem;color:#666">
     <b>Format pliku:</b> Excel (.xlsx) z dwoma arkuszami — jedna drużyna = jeden arkusz.<br>
     Obsługuje stary format (11 kolumn) i nowy (14 kolumn z asystami i zbiorkami).
   </div>
@@ -1303,6 +1324,379 @@ def export_pdf():
     except Exception as e:
         flash(f"Błąd eksportu PDF: {str(e)}", "error")
         return redirect(url_for("index"))
+
+
+@app.route("/template/zapis")
+def template_zapis():
+    wb = openpyxl.Workbook()
+
+    # Styl nagłówka
+    HDR  = PatternFill("solid", fgColor="1A2B4A")
+    HDR_F = Font(color="FFFFFF", bold=True, size=10)
+    YEL  = PatternFill("solid", fgColor="FFF9C4")
+    GRN  = PatternFill("solid", fgColor="E8F5E9")
+    CTR  = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    BORDER = Border(
+        bottom=Side(style="thin", color="CCCCCC"),
+        right=Side(style="thin", color="CCCCCC"),
+        left=Side(style="thin", color="CCCCCC"),
+        top=Side(style="thin", color="CCCCCC"),
+    )
+
+    KODY = [
+        ("2",      "Celny rzut za 2 pkt"),
+        ("0/2",    "Niecelny rzut za 2 pkt"),
+        ("3",      "Celny rzut za 3 pkt"),
+        ("0/3",    "Niecelny rzut za 3 pkt"),
+        ("BR",     "Strata piłki"),
+        ("P",      "Przewinienie"),
+        ("F",      "Faul"),
+        ("2+1",    "Celny 2pkt + rzut wolny"),
+        ("2+0",    "Celny 2pkt + niecelny RW"),
+        ("3+1",    "Celny 3pkt + rzut wolny"),
+        ("3+0",    "Celny 3pkt + niecelny RW"),
+        ("2D",     "Celny tip-in za 2pkt"),
+        ("0/2D",   "Niecelny tip-in za 2pkt"),
+        ("2D+1",   "Celny tip-in + RW"),
+        ("1/2W",   "1/2 rzutów wolnych"),
+        ("2/2W",   "2/2 rzutów wolnych"),
+        ("0/2W",   "0/2 rzutów wolnych"),
+        ("1/3W",   "1/3 rzutów wolnych"),
+        ("2/3W",   "2/3 rzutów wolnych"),
+        ("3/3W",   "3/3 rzutów wolnych"),
+        ("0/3W",   "0/3 rzutów wolnych"),
+    ]
+
+    # ── Arkusz KODY (ściągawka) ────────────────────────────────────────────
+    ws_kody = wb.active
+    ws_kody.title = "KODY"
+    ws_kody.column_dimensions['A'].width = 12
+    ws_kody.column_dimensions['B'].width = 32
+
+    ws_kody.merge_cells('A1:B1')
+    t = ws_kody['A1']
+    t.value = "KODY AKCJI — ściągawka"
+    t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=12); t.alignment = CTR
+    ws_kody.row_dimensions[1].height = 24
+
+    ws_kody['A2'] = "KOD";      ws_kody['A2'].fill = HDR; ws_kody['A2'].font = HDR_F; ws_kody['A2'].alignment = CTR
+    ws_kody['B2'] = "OPIS";     ws_kody['B2'].fill = HDR; ws_kody['B2'].font = HDR_F; ws_kody['B2'].alignment = CTR
+
+    for i,(kod,opis) in enumerate(KODY):
+        r = 3+i
+        c1 = ws_kody.cell(r,1,kod);  c1.fill = YEL; c1.alignment = CTR; c1.border = BORDER
+        c1.font = Font(bold=True, size=10)
+        c2 = ws_kody.cell(r,2,opis); c2.border = BORDER
+        if i%2==0: c2.fill = PatternFill("solid", fgColor="FAFAFA")
+
+    ws_kody.merge_cells('A26:B26')
+    ws_kody['A26'] = "Wielokrotne akcje w posiadaniu: oddziel średnikiem  np. F;2+1"
+    ws_kody['A26'].font = Font(italic=True, color="555555", size=9)
+
+    # ── Arkusze drużyn ─────────────────────────────────────────────────────
+    COLS = [
+        ("A","Kwarta\n(*kto rozpoczął)",7),
+        ("B","Czas trwania\nakcji",9),
+        ("C","Kod zakończenia\nakcji",12),
+        ("D","Strefa\n(numer)",8),
+        ("E","Zawodnik 1",11),
+        ("F","Zawodnik 2",11),
+        ("G","Zawodnik 3",11),
+        ("H","Zawodnik 4",11),
+        ("I","Zawodnik 5",11),
+        ("J","Timeout",8),
+        ("K","Zawodnik\nkończący",11),
+        ("L","Asysta ★",9),
+        ("M","OREB ★",9),
+        ("N","DREB ★",9),
+    ]
+
+    for team_name in ["drużyna_A", "drużyna_B"]:
+        ws = wb.create_sheet(team_name)
+
+        # Nagłówek
+        ws.merge_cells('A1:N1')
+        t = ws['A1']
+        t.value = f"ZAPIS MECZU — {team_name.upper()}   |   Wpisz nazwę drużyny w zakładce"
+        t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=11); t.alignment = CTR
+        ws.row_dimensions[1].height = 22
+
+        # Kolumny
+        for col_letter, label, width in COLS:
+            ws.column_dimensions[col_letter].width = width
+            c = ws[f"{col_letter}2"]
+            c.value = label; c.fill = HDR; c.font = HDR_F
+            c.alignment = CTR; c.border = BORDER
+        ws.row_dimensions[2].height = 32
+
+        # Walidacja kolumny C (kody akcji)
+        from openpyxl.worksheet.datavalidation import DataValidation
+        valid_codes = ",".join([k for k,_ in KODY])
+        # Tylko podstawowe — Excel ma limit długości
+        dv = DataValidation(
+            type="list",
+            formula1='"2,0/2,3,0/3,BR,P,F,2+1,2D,0/2D,1/2W,2/2W,0/2W"',
+            allow_blank=True,
+            showErrorMessage=False
+        )
+        ws.add_data_validation(dv)
+        dv.add(f"C3:C500")
+
+        # Puste wiersze z formatowaniem (50 wierszy)
+        for r in range(3, 53):
+            for col_idx, (col_letter, _, _) in enumerate(COLS):
+                c = ws[f"{col_letter}{r}"]
+                c.border = BORDER
+                c.alignment = Alignment(horizontal="center", vertical="center")
+                # Żółte tło dla kluczowych kolumn
+                if col_letter in ['A','B','C','D']:
+                    c.fill = YEL
+                elif col_letter in ['K','L','M','N']:
+                    c.fill = GRN
+            if r % 2 == 0:
+                for col_letter, _, _ in COLS:
+                    existing = ws[f"{col_letter}{r}"].fill
+                    if ws[f"{col_letter}{r}"].fill.fgColor.rgb in ('FFFFFFFF', '00000000'):
+                        ws[f"{col_letter}{r}"].fill = PatternFill("solid", fgColor="F8F8F8")
+
+        # Legenda kolorów
+        r_leg = 55
+        ws.merge_cells(f'A{r_leg}:N{r_leg}')
+        ws[f'A{r_leg}'] = "🟡 Żółte = obowiązkowe   🟢 Zielone = opcjonalne (★ = tylko nowy format 14 kolumn)"
+        ws[f'A{r_leg}'].font = Font(italic=True, color="666666", size=9)
+
+        # Freeze row
+        ws.freeze_panes = "A3"
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True,
+                     download_name="ZAPIS_MECZU_szablon.xlsx",
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route("/template/szablon")
+def template_szablon():
+    wb = openpyxl.Workbook()
+
+    HDR   = PatternFill("solid", fgColor="1A2B4A")
+    HDR_F = Font(color="FFFFFF", bold=True, size=10)
+    AMB   = PatternFill("solid", fgColor="FFF8E1")   # INPUT
+    KPI   = PatternFill("solid", fgColor="E8F5E9")   # KPI
+    CTR   = Alignment(horizontal="center", vertical="center")
+    BORDER = Border(
+        bottom=Side(style="thin", color="CCCCCC"),
+        right=Side(style="thin", color="CCCCCC"),
+        left=Side(style="thin", color="CCCCCC"),
+        top=Side(style="thin", color="CCCCCC"),
+    )
+
+    def hdr(ws, row, col, val, w=10):
+        c = ws.cell(row, col, val)
+        c.fill = HDR; c.font = HDR_F; c.alignment = CTR; c.border = BORDER
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    def inp(ws, row, col, val=""):
+        c = ws.cell(row, col, val)
+        c.fill = AMB; c.alignment = CTR; c.border = BORDER
+
+    def kpi_cell(ws, row, col, val=""):
+        c = ws.cell(row, col, val)
+        c.fill = KPI; c.alignment = CTR; c.border = BORDER
+
+    def section_title(ws, row, col_start, col_end, title):
+        ws.merge_cells(start_row=row, start_column=col_start, end_row=row, end_column=col_end)
+        c = ws.cell(row, col_start, title)
+        c.fill = PatternFill("solid", fgColor="E3F2FD")
+        c.font = Font(bold=True, color="0C447C", size=10)
+        c.alignment = CTR
+
+    # ── TEAM GENERAL ──────────────────────────────────────────────────────
+    ws1 = wb.active; ws1.title = "TEAM GENERAL"
+    ws1.row_dimensions[1].height = 28
+
+    ws1.merge_cells('A1:V1')
+    t = ws1['A1']; t.value = "TEAM GENERAL — Statystyki drużyny per kwarta"
+    t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=12); t.alignment = CTR
+
+    hdrs_gen = [
+        ("Q",4),("PKT",7),("POSS",6),
+        ("2PM",6),("2PA",6),("2P%",7),
+        ("3PM",6),("3PA",6),("3P%",7),
+        ("FTM",6),("FTA",6),("FT%",7),
+        ("BR",6),("P",6),("FD",6),
+        ("eFG%",7),("TS%",7),("ORtg",7),
+        ("DRtg",7),("NetRtg",8),("PPP",7),("TO%",7),
+    ]
+    for i,(h,w) in enumerate(hdrs_gen):
+        hdr(ws1, 2, i+1, h, w)
+
+    for r, qname in enumerate(["1Q","2Q","3Q","4Q","SUMA"], 3):
+        ws1.cell(r, 1, qname).font = Font(bold=True)
+        for col in range(2, len(hdrs_gen)+1):
+            inp(ws1, r, col)
+        if qname == "SUMA":
+            ws1.row_dimensions[r].height = 20
+            for col in range(1, len(hdrs_gen)+1):
+                ws1.cell(r, col).fill = PatternFill("solid", fgColor="E8F0FB")
+                ws1.cell(r, col).font = Font(bold=True)
+
+    ws1.freeze_panes = "B3"
+
+    # ── PLAYERS ───────────────────────────────────────────────────────────
+    ws2 = wb.create_sheet("PLAYERS")
+    ws2.merge_cells('A1:P1')
+    t = ws2['A1']; t.value = "PLAYERS — Statystyki zawodników"
+    t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=12); t.alignment = CTR
+
+    hdrs_p = [
+        ("#",5),("MIN",7),("PTS",7),
+        ("2PM",6),("2PA",6),("2P%",7),
+        ("3PM",6),("3PA",6),("3P%",7),
+        ("FTM",6),("FTA",6),("FT%",7),
+        ("eFG%",7),("TS%",7),
+        ("AST",6),("OREB",6),("DREB",6),
+        ("BR",6),("FD",6),("FIN",6),
+    ]
+    for i,(h,w) in enumerate(hdrs_p):
+        hdr(ws2, 2, i+1, h, w)
+
+    for r in range(3, 18):
+        for col in range(1, len(hdrs_p)+1):
+            inp(ws2, r, col)
+        if r % 2 == 0:
+            for col in range(1, len(hdrs_p)+1):
+                ws2.cell(r, col).fill = PatternFill("solid", fgColor="FFF3E0")
+
+    ws2.freeze_panes = "B3"
+
+    # ── LINEUPS ───────────────────────────────────────────────────────────
+    ws3 = wb.create_sheet("LINEUPS")
+    ws3.merge_cells('A1:L1')
+    t = ws3['A1']; t.value = "LINEUPS — Statystyki składów 5-osobowych"
+    t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=12); t.alignment = CTR
+
+    hdrs_l = [
+        ("Skład",22),("POSS",7),("PKT",7),("PPP",7),
+        ("eFG%",7),("ORtg",7),("DRtg",7),("NetRtg",9),
+        ("BR",6),("FD",6),("2P%",7),("3P%",7),("Śr.tempo",10),
+    ]
+    for i,(h,w) in enumerate(hdrs_l):
+        hdr(ws3, 2, i+1, h, w)
+
+    for r in range(3, 18):
+        for col in range(1, len(hdrs_l)+1):
+            inp(ws3, r, col)
+
+    ws3.freeze_panes = "B3"
+
+    # ── SHOT TIMING ───────────────────────────────────────────────────────
+    ws4 = wb.create_sheet("SHOT TIMING")
+    ws4.merge_cells('A1:H1')
+    t = ws4['A1']; t.value = "SHOT TIMING — Skuteczność vs czas posiadania"
+    t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=12); t.alignment = CTR
+
+    hdrs_t = [
+        ("Czas posiadania",18),("2PT Made",10),("2PT Att",10),("2PT%",8),
+        ("3PT Made",10),("3PT Att",10),("3PT%",8),("Eff% łącznie",12),
+    ]
+    for i,(h,w) in enumerate(hdrs_t):
+        hdr(ws4, 2, i+1, h, w)
+
+    for i,b in enumerate(["0s","1-4s","5-8s","9-12s","13-16s","17-20s","21-24s"]):
+        r = 3+i
+        ws4.cell(r, 1, b).font = Font(bold=True)
+        for col in range(2, len(hdrs_t)+1):
+            inp(ws4, r, col)
+
+    ws4.freeze_panes = "B3"
+
+    # ── COURT ZONES ───────────────────────────────────────────────────────
+    ws5 = wb.create_sheet("COURT ZONES")
+    ws5.merge_cells('A1:H1')
+    t = ws5['A1']; t.value = "COURT ZONES — Statystyki per strefa boiska"
+    t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=12); t.alignment = CTR
+
+    zone_names_list = [
+        (1,"Pod koszem"),(2,"Prawy blok bliski"),(3,"Lewy blok bliski"),
+        (4,"Środek farby"),(5,"Lewy blok daleki"),(6,"Prawy blok daleki"),
+        (7,"Lewy baseline"),(8,"Prawy baseline"),(9,"Lewy corner 3PT"),
+        (10,"Prawy corner 3PT"),(11,"Lewe skrzydło 3PT"),(12,"Góra łuku 3PT"),
+        (13,"Prawe skrzydło 3PT"),
+    ]
+
+    hdrs_z = [
+        ("#",5),("Strefa",22),("Obszar",12),
+        ("Celne",8),("Niecelne",9),("Próby",7),("Eff%",8),("PPP",7),
+    ]
+    for i,(h,w) in enumerate(hdrs_z):
+        hdr(ws5, 2, i+1, h, w)
+
+    for i,(zn,zname) in enumerate(zone_names_list):
+        r = 3+i
+        area = "Pod koszem" if zn<=2 else ("Farba" if zn<=6 else ("Mid-range" if zn<=8 else "3PT"))
+        ws5.cell(r,1,zn).font = Font(bold=True); ws5.cell(r,1).alignment = CTR
+        ws5.cell(r,2,zname)
+        ws5.cell(r,3,area)
+        for col in range(4, len(hdrs_z)+1):
+            inp(ws5, r, col)
+        if i%2==0:
+            ws5.cell(r,2).fill = PatternFill("solid", fgColor="FAFAFA")
+            ws5.cell(r,3).fill = PatternFill("solid", fgColor="FAFAFA")
+
+    ws5.freeze_panes = "D3"
+
+    # ── LEGENDA ───────────────────────────────────────────────────────────
+    ws6 = wb.create_sheet("LEGENDA")
+    ws6.column_dimensions['A'].width = 22
+    ws6.column_dimensions['B'].width = 48
+
+    ws6.merge_cells('A1:B1')
+    t = ws6['A1']; t.value = "LEGENDA — Opis metryk"
+    t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=12); t.alignment = CTR
+
+    legend = [
+        ("eFG%",       "Efektywny % rzutów: (2PM + 1.5×3PM) / FGA"),
+        ("TS%",        "Prawdziwy %: PTS / (2 × (FGA + 0.44×FTA))"),
+        ("ORtg",       "Offensive Rating: PTS×100/POSS"),
+        ("DRtg",       "Defensive Rating: OPP_PTS×100/OPP_POSS"),
+        ("NetRtg",     "ORtg − DRtg"),
+        ("PPP",        "Punkty na posiadanie: PTS/POSS"),
+        ("TO%",        "% posiadań ze stratą: BR/POSS"),
+        ("FT Rate",    "Stosunek rzutów wolnych: FTA/FGA"),
+        ("FIN",        "Wykończenia — rzuty kończące posiadanie"),
+        ("POSS",       "Posiadania — liczba ataków drużyny"),
+        ("BR",         "Ball lost — strata piłki"),
+        ("FD",         "Faule wymuszone na atakującym"),
+    ]
+    hdr(ws6, 2, 1, "Metryka", 22); hdr(ws6, 2, 2, "Opis", 48)
+    for i,(m,o) in enumerate(legend):
+        r = 3+i
+        c1=ws6.cell(r,1,m); c1.font=Font(bold=True); c1.border=BORDER
+        c2=ws6.cell(r,2,o); c2.border=BORDER
+        if i%2==0:
+            c1.fill=PatternFill("solid",fgColor="F5F5F5")
+            c2.fill=PatternFill("solid",fgColor="F5F5F5")
+
+    # Legenda kolorów
+    r_leg = 3+len(legend)+2
+    ws6.merge_cells(f'A{r_leg}:B{r_leg}')
+    ws6[f'A{r_leg}'] = "Kolory komórek:"
+    ws6[f'A{r_leg}'].font = Font(bold=True)
+    for i, (col, desc) in enumerate([
+        ("FFF8E1","🟡 Żółty — pole INPUT (wpisz dane)"),
+        ("E8F5E9","🟢 Zielony — pole KPI (obliczone)"),
+    ]):
+        r2 = r_leg+1+i
+        ws6.cell(r2,1).fill = PatternFill("solid",fgColor=col)
+        ws6.cell(r2,1).border = BORDER
+        ws6.cell(r2,2,desc).border = BORDER
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True,
+                     download_name="SZABLON_MECZ.xlsx",
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 if __name__ == "__main__":
