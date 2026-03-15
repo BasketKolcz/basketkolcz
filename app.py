@@ -95,10 +95,10 @@ def parse_team_sheet(ws):
         raw_b = str(row[1]) if row[1] is not None else ""
         raw_c = str(row[2]) if row[2] is not None else ""
         raw_d = str(row[3]) if row[3] is not None else ""
-        raw_k = str(row[10]) if row[10] is not None else ""
-        raw_l = str(row[11]) if row[11] is not None else ""  # asysta
-        raw_m = str(row[12]) if row[12] is not None else ""  # OREB
-        raw_n = str(row[13]) if row[13] is not None else ""  # DREB
+        raw_k = str(row[10]) if len(row) > 10 and row[10] is not None else ""
+        raw_l = str(row[11]) if len(row) > 11 and row[11] is not None else ""  # asysta
+        raw_m = str(row[12]) if len(row) > 12 and row[12] is not None else ""  # OREB
+        raw_n = str(row[13]) if len(row) > 13 and row[13] is not None else ""  # DREB
 
         codes   = [c.strip() for c in raw_c.split(";") if c.strip()]
         times   = [t.strip() for t in raw_b.split(",") if t.strip()]
