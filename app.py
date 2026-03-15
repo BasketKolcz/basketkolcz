@@ -635,25 +635,152 @@ def upload():
         panel_a = build_team_panel(name_a, stats_a, "A")
         panel_b = build_team_panel(name_b, stats_b, "B") if stats_b else ""
 
-        # Tabela porównawcza
+        # ── Tabela Kluczowych Metryk ──────────────────────────────────────────
+        def bar_html(va, vb, higher_is_better=True):
+            """Pasek porównawczy — wizualizuje przewagę"""
+            try:
+                fa = float(str(va).replace('%','').replace('-','0') or 0)
+                fb = float(str(vb).replace('%','').replace('-','0') or 0)
+            except: return ""
+            total = fa + fb
+            if total == 0: return ""
+            pct_a = int(fa / total * 100)
+            pct_b = 100 - pct_a
+            # kto wygrywa
+            if fa > fb:
+                col_a, col_b = '#1a6b3c', '#e0e0e0'
+            elif fb > fa:
+                col_a, col_b = '#e0e0e0', '#8b1a1a'
+            else:
+                col_a = col_b = '#aaa'
+            return f'''<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:4px">
+                <div style="width:{pct_a}%;background:{col_a}"></div>
+                <div style="width:{pct_b}%;background:{col_b}"></div>
+            </div>'''
+
         cmp_rows = ""
         if kpi_b:
-            rows = [
-                ("Punkty",           suma_a.get("pts",0),    suma_b.get("pts",0)),
-                ("Posiadania",        suma_a.get("poss",0),   suma_b.get("poss",0)),
-                ("eFG%",              kpi_a["efg"],           kpi_b["efg"]),
-                ("True Shooting%",    kpi_a["ts"],            kpi_b["ts"]),
-                ("Offensive Rating",  kpi_a["ortg"],          kpi_b["ortg"]),
-                ("Pkt/Posiadanie",    kpi_a["ppp"],           kpi_b["ppp"]),
-                ("Turnover%",         kpi_a["topct"],         kpi_b["topct"]),
-                ("FT Rate",           kpi_a["ftr"],           kpi_b["ftr"]),
-                ("2PT%",              kpi_a["p2_pct"],        kpi_b["p2_pct"]),
-                ("3PT%",              kpi_a["p3_pct"],        kpi_b["p3_pct"]),
-                ("Straty (BR)",       suma_a.get("br",0),     suma_b.get("br",0)),
-                ("Faule wymuszone",   suma_a.get("fd",0),     suma_b.get("fd",0)),
+            metrics = [
+                ("Punkty",           suma_a.get("pts",0),    suma_b.get("pts",0),    True,  "Łączna liczba punktów zdobytych w meczu"),
+                ("Posiadania",        suma_a.get("poss",0),   suma_b.get("poss",0),   True,  "Liczba posiadań piłki"),
+                ("eFG%",              kpi_a["efg"],           kpi_b["efg"],           True,  "Efektywny % rzutów z pola (uwzględnia wagę trójki)"),
+                ("True Shooting%",    kpi_a["ts"],            kpi_b["ts"],            True,  "Prawdziwy % skuteczności (2PT + 3PT + FT)"),
+                ("Offensive Rating",  kpi_a["ortg"],          kpi_b["ortg"],          True,  "Punkty na 100 posiadań"),
+                ("Pkt / Posiadanie",  kpi_a["ppp"],           kpi_b["ppp"],           True,  "Średnia punktów na jedno posiadanie"),
+                ("2PT%",              kpi_a["p2_pct"],        kpi_b["p2_pct"],        True,  "Skuteczność rzutów za 2 punkty"),
+                ("3PT%",              kpi_a["p3_pct"],        kpi_b["p3_pct"],        True,  "Skuteczność rzutów za 3 punkty"),
+                ("FT%",               kpi_a["ft_pct"],        kpi_b["ft_pct"],        True,  "Skuteczność rzutów wolnych"),
+                ("FT Rate",           kpi_a["ftr"],           kpi_b["ftr"],           True,  "Stosunek rzutów wolnych do rzutów z gry"),
+                ("Turnover%",         kpi_a["topct"],         kpi_b["topct"],         False, "% posiadań zakończonych stratą (niższy = lepszy)"),
+                ("Straty (BR)",       suma_a.get("br",0),     suma_b.get("br",0),     False, "Liczba strat"),
+                ("Faule wymuszone",   suma_a.get("fd",0),     suma_b.get("fd",0),     True,  "Liczba wymuszonych fauli"),
+                ("2PM/A",             f"{suma_a.get('2pm',0)}/{suma_a.get('2pa',0)}", f"{suma_b.get('2pm',0)}/{suma_b.get('2pa',0)}", None, "Celne/próby za 2 punkty"),
+                ("3PM/A",             f"{suma_a.get('3pm',0)}/{suma_a.get('3pa',0)}", f"{suma_b.get('3pm',0)}/{suma_b.get('3pa',0)}", None, "Celne/próby za 3 punkty"),
+                ("FTM/A",             f"{suma_a.get('ftm',0)}/{suma_a.get('fta',0)}", f"{suma_b.get('ftm',0)}/{suma_b.get('fta',0)}", None, "Celne/próby rzutów wolnych"),
             ]
-            for lbl, va, vb in rows:
-                cmp_rows += f"<tr><td>{lbl}</td><td class='text-center fw-bold' style='color:#1a6b3c'>{va}</td><td class='text-center fw-bold' style='color:#8b1a1a'>{vb}</td></tr>"
+            for lbl, va, vb, hib, desc in metrics:
+                bar = bar_html(va, vb, hib) if hib is not None else ""
+                # Podświetl wygraną stronę
+                try:
+                    fa2 = float(str(va).replace('%','').replace('/','').replace('-','0') or 0)
+                    fb2 = float(str(vb).replace('%','').replace('/','').replace('-','0') or 0)
+                    style_a = "font-weight:700;color:#1a6b3c" if (hib and fa2>fb2) or (hib==False and fa2<fb2) else "color:#555"
+                    style_b = "font-weight:700;color:#8b1a1a" if (hib and fb2>fa2) or (hib==False and fb2<fa2) else "color:#555"
+                except:
+                    style_a = style_b = "color:#555"
+                cmp_rows += f"""<tr>
+                    <td style="font-size:.8rem">
+                        <span style="font-weight:600">{lbl}</span>
+                        <div style="font-size:.7rem;color:#aaa">{desc}</div>
+                        {bar}
+                    </td>
+                    <td class="text-center" style="{style_a};font-size:.9rem">{va}</td>
+                    <td class="text-center" style="{style_b};font-size:.9rem">{vb}</td>
+                </tr>"""
+
+        # ── Shot Timing porównanie ────────────────────────────────────────────
+        tim_cmp_rows = ""
+        if stats_b:
+            for b in BUCKETS:
+                ba = stats_a["timing"][b]
+                bb2 = stats_b["timing"][b]
+                made_a = ba["2PT"]["made"]+ba["3PT"]["made"]
+                att_a  = made_a + ba["2PT"]["miss"]+ba["3PT"]["miss"]
+                made_b = bb2["2PT"]["made"]+bb2["3PT"]["made"]
+                att_b  = made_b + bb2["2PT"]["miss"]+bb2["3PT"]["miss"]
+                eff_a = f"{made_a/att_a:.0%}" if att_a else "-"
+                eff_b = f"{made_b/att_b:.0%}" if att_b else "-"
+                # Pasek długości posiadań
+                max_att = max(att_a, att_b, 1)
+                bar_a = int(att_a/max_att*80)
+                bar_b = int(att_b/max_att*80)
+                tim_cmp_rows += f"""<tr>
+                    <td class="fw-bold" style="font-size:.82rem">{b}</td>
+                    <td class="text-center" style="font-size:.82rem">{made_a}/{att_a}</td>
+                    <td class="text-center" style="font-size:.82rem;color:#1a6b3c;font-weight:600">{eff_a}</td>
+                    <td style="padding:4px 8px">
+                        <div style="height:8px;width:{bar_a}px;background:#1a6b3c;border-radius:4px;display:inline-block"></div>
+                    </td>
+                    <td style="padding:4px 8px">
+                        <div style="height:8px;width:{bar_b}px;background:#8b1a1a;border-radius:4px;display:inline-block"></div>
+                    </td>
+                    <td class="text-center" style="font-size:.82rem;color:#8b1a1a;font-weight:600">{eff_b}</td>
+                    <td class="text-center" style="font-size:.82rem">{made_b}/{att_b}</td>
+                </tr>"""
+
+        # ── Zakładka porównanie HTML ──────────────────────────────────────────
+        if name_b:
+            tab_cmp = (
+                '<div class="tab-pane fade" id="tabCmp">'
+                '<ul class="nav nav-tabs mt-2 mb-1" id="cmpTabs">'
+                '<li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#cmpMetrics">Kluczowe Metryki</button></li>'
+                '<li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#cmpTiming">Shot Timing</button></li>'
+                '</ul>'
+                '<div class="tab-content">'
+                '<div class="tab-pane fade show active" id="cmpMetrics">'
+                '<div class="card mt-2"><div class="card-body p-2">'
+                '<div class="table-responsive">'
+                '<table class="table table-sm table-hover mb-0">'
+                '<thead><tr>'
+                '<th>Metryka</th>'
+                '<th class="text-center" style="color:#1a6b3c">' + name_a + '</th>'
+                '<th class="text-center" style="color:#8b1a1a">' + name_b + '</th>'
+                '</tr></thead>'
+                '<tbody>' + cmp_rows + '</tbody>'
+                '</table></div>'
+                '</div></div>'
+                '<div class="card mt-3"><div class="card-body p-3">'
+                '<div class="section-title">Punkty per kwarta</div>'
+                '<canvas id="qChart"></canvas>'
+                '</div></div>'
+                '</div>'
+                '<div class="tab-pane fade" id="cmpTiming">'
+                '<div class="card mt-2"><div class="card-body p-2">'
+                '<p class="text-muted mb-2" style="font-size:.8rem">Porównanie skuteczności rzutów według czasu trwania posiadania (zegar 24s)</p>'
+                '<div class="d-flex gap-3 mb-2" style="font-size:.78rem">'
+                '<span><span style="display:inline-block;width:12px;height:8px;background:#1a6b3c;border-radius:2px;margin-right:4px"></span>' + name_a + '</span>'
+                '<span><span style="display:inline-block;width:12px;height:8px;background:#8b1a1a;border-radius:2px;margin-right:4px"></span>' + name_b + '</span>'
+                '</div>'
+                '<div class="table-responsive">'
+                '<table class="table table-hover mb-0">'
+                '<thead><tr>'
+                '<th>Czas</th>'
+                '<th class="text-center" style="color:#1a6b3c">Celne/Próby</th>'
+                '<th class="text-center" style="color:#1a6b3c">Eff%</th>'
+                '<th>' + name_a + '</th>'
+                '<th>' + name_b + '</th>'
+                '<th class="text-center" style="color:#8b1a1a">Eff%</th>'
+                '<th class="text-center" style="color:#8b1a1a">Celne/Próby</th>'
+                '</tr></thead>'
+                '<tbody>' + tim_cmp_rows + '</tbody>'
+                '</table></div>'
+                '</div></div>'
+                '</div>'
+                '</div>'
+                '</div>'
+            )
+        else:
+            tab_cmp = ""
 
         # Score hero
         score_a = suma_a.get("pts",0)
@@ -689,7 +816,7 @@ def upload():
 
 {'<div class="tab-pane fade" id="tabB">' + panel_b + '</div>' if name_b else ''}
 
-{'<div class="tab-pane fade" id="tabCmp"><div class="row g-3 mt-1"><div class="col-lg-5"><div class="card"><div class="card-body p-2"><div class="section-title">Kluczowe metryki</div><table class="table table-sm table-hover mb-0"><thead><tr><th>Metryka</th><th class="text-center" style="color:#1a6b3c">' + name_a + '</th><th class="text-center" style="color:#8b1a1a">' + (name_b or '') + '</th></tr></thead><tbody>' + cmp_rows + '</tbody></table></div></div></div><div class="col-lg-7"><div class="card"><div class="card-body p-3"><div class="section-title">Punkty per kwarta</div><canvas id="qChart"></canvas></div></div></div></div></div>' if name_b else ''}
+{tab_cmp}
 
 </div>"""
 
