@@ -3911,44 +3911,70 @@ def template_szablon():
 def roster():
     try: init_db()
     except: pass
+    sort = request.args.get("sort","nazwisko")
+    order = request.args.get("order","asc")
+    if sort not in ("nazwisko","imie","aktywny"): sort = "nazwisko"
+    sql_order = f"r.{sort} {'DESC' if order=='desc' else 'ASC'}, r.imie ASC"
+
     db = get_db(); cur = db.cursor()
-    cur.execute("""
+    cur.execute(f"""
         SELECT r.id, r.imie, r.nazwisko, r.pseudonim, r.aktywny,
                COALESCE(string_agg(DISTINCT pa.nr::text, ', '), '—') as numery
         FROM roster r
         LEFT JOIN player_aliases pa ON pa.roster_id = r.id
         GROUP BY r.id, r.imie, r.nazwisko, r.pseudonim, r.aktywny
-        ORDER BY r.nazwisko, r.imie
+        ORDER BY {sql_order}
     """)
     players = cur.fetchall()
     cur.close()
 
+    def sort_arrow(col):
+        if sort == col:
+            return " ↓" if order=="asc" else " ↑"
+        return " ↕"
+
+    def sort_url(col):
+        new_order = "desc" if (sort==col and order=="asc") else "asc"
+        return f"/roster?sort={col}&order={new_order}"
+
     rows = ""
     for i, p in enumerate(players):
         bg = "background:#f8f9ff" if i%2==0 else ""
-        aktywny = '<span class="badge-win" style="font-size:.7rem">aktywny</span>' if p['aktywny'] else '<span class="badge-draw" style="font-size:.7rem">nieaktywny</span>'
-        rows += f"""<tr style="{bg}">
-            <td class="fw-bold">{p['imie']} {p['nazwisko']}</td>
+        is_active = p['aktywny']
+        # Toggle button
+        toggle_label = "aktywny" if is_active else "nieaktywny"
+        toggle_style = "background:#c8e6c9;color:#1a6b3c" if is_active else "background:#e0e0e0;color:#555"
+        toggle_title = "Kliknij aby dezaktywować" if is_active else "Kliknij aby aktywować"
+        rows += f"""<tr style="{bg}" id="row_{p['id']}">
+            <td class="fw-bold">{p['nazwisko']} {p['imie']}</td>
             <td style="color:#888;font-size:.82rem">{p['pseudonim'] or '—'}</td>
             <td style="font-size:.8rem">{p['numery']}</td>
-            <td>{aktywny}</td>
+            <td>
+              <button type="button"
+                onclick="toggleStatus({p['id']}, this)"
+                data-active="{1 if is_active else 0}"
+                title="{toggle_title}"
+                style="border:none;border-radius:20px;padding:3px 10px;font-size:.7rem;font-weight:700;cursor:pointer;transition:.2s;{toggle_style}">
+                {toggle_label}
+              </button>
+            </td>
             <td class="text-center">
               <a href="/roster/{p['id']}/edit" class="btn btn-outline-primary btn-sm" style="font-size:.72rem">Edytuj</a>
               <a href="/roster/{p['id']}/delete" class="btn btn-outline-danger btn-sm ms-1" style="font-size:.72rem"
-                 onclick="return confirm('Usunąć zawodnika?')">✕</a>
+                 onclick="return confirm('Usunąć {p['imie']} {p['nazwisko']}?')">✕</a>
             </td>
         </tr>"""
 
     content = f"""
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <div class="page-title mb-0">👥 Skład drużyny</div>
+  <div class="page-title mb-0">👥 Skład drużyny <span style="font-size:.8rem;color:#aaa;font-weight:400">({len(players)} zawodników)</span></div>
   <div class="d-flex gap-2 flex-wrap">
-    <a href="/roster/szablon" class="btn btn-outline-secondary btn-sm">📥 Pobierz szablon Excel</a>
-    <button class="btn btn-outline-success btn-sm" onclick="document.getElementById('importFile').click()">📤 Importuj z Excel</button>
+    <a href="/roster/szablon" class="btn btn-outline-secondary btn-sm">📥 Szablon Excel</a>
+    <button class="btn btn-outline-success btn-sm" onclick="document.getElementById('importFile').click()">📤 Importuj</button>
     <form method="POST" action="/roster/import" enctype="multipart/form-data" style="display:none">
       <input type="file" id="importFile" name="file" accept=".xlsx" onchange="this.form.submit()">
     </form>
-    <a href="/roster/nowy" class="btn btn-primary btn-sm">+ Dodaj zawodnika</a>
+    <a href="/roster/nowy" class="btn btn-primary btn-sm">+ Dodaj</a>
   </div>
 </div>
 <div class="card">
@@ -3956,16 +3982,46 @@ def roster():
     <div class="table-responsive">
       <table class="table table-hover mb-0">
         <thead><tr>
-          <th>Imię i nazwisko</th><th>Pseudonim</th><th>Numery koszulek</th><th>Status</th><th class="text-center">Akcje</th>
+          <th>
+            <a href="{sort_url('nazwisko')}" class="text-white text-decoration-none">
+              Nazwisko i imię{sort_arrow('nazwisko')}
+            </a>
+          </th>
+          <th>Pseudonim</th>
+          <th>Numery koszulek</th>
+          <th>
+            <a href="{sort_url('aktywny')}" class="text-white text-decoration-none">
+              Status{sort_arrow('aktywny')}
+            </a>
+          </th>
+          <th class="text-center">Akcje</th>
         </tr></thead>
-        <tbody>
-          {rows if rows else '<tr><td colspan="5" class="text-center text-muted py-4">Brak zawodników — dodaj pierwszego lub zaimportuj z Excel</td></tr>'}
+        <tbody id="rosterBody">
+          {rows if rows else '<tr><td colspan="5" class="text-center text-muted py-4">Brak zawodników</td></tr>'}
         </tbody>
       </table>
     </div>
   </div>
 </div>"""
-    return render_template_string(base(content, active="roster"))
+
+    scripts = """<script>
+function toggleStatus(id, btn) {
+    const isActive = btn.dataset.active === '1';
+    fetch('/roster/' + id + '/toggle', {method:'POST'})
+    .then(r => r.json())
+    .then(data => {
+        if(data.ok) {
+            btn.dataset.active = data.aktywny ? '1' : '0';
+            btn.textContent = data.aktywny ? 'aktywny' : 'nieaktywny';
+            btn.style.background = data.aktywny ? '#c8e6c9' : '#e0e0e0';
+            btn.style.color = data.aktywny ? '#1a6b3c' : '#555';
+            btn.title = data.aktywny ? 'Kliknij aby dezaktywować' : 'Kliknij aby aktywować';
+        }
+    });
+}
+</script>"""
+
+    return render_template_string(base(content, scripts, active="roster"))
 
 
 @app.route("/roster/szablon")
@@ -4088,9 +4144,13 @@ def roster_import():
             aktywny   = status != "nieaktywny"
 
             try:
-                # Sprawdź czy istnieje (po imieniu + nazwisku)
-                cur.execute("SELECT id FROM roster WHERE imie=%s AND nazwisko=%s", (imie, nazwisko))
+                # Sprawdź czy istnieje po nazwisku (główny klucz)
+                cur.execute("SELECT id FROM roster WHERE LOWER(nazwisko)=LOWER(%s)", (nazwisko,))
                 existing = cur.fetchone()
+                if not existing and imie:
+                    # Próbuj też po imieniu + nazwisku
+                    cur.execute("SELECT id FROM roster WHERE LOWER(imie)=LOWER(%s) AND LOWER(nazwisko)=LOWER(%s)", (imie, nazwisko))
+                    existing = cur.fetchone()
 
                 if existing:
                     cur.execute("UPDATE roster SET pseudonim=%s, aktywny=%s WHERE id=%s",
@@ -4238,6 +4298,24 @@ def roster_edit(player_id=None):
   </div>
 </div></div>"""
     return render_template_string(base(content, active="players"))
+
+
+@app.route("/roster/<int:player_id>/toggle", methods=["POST"])
+def roster_toggle(player_id):
+    from flask import jsonify
+    try:
+        db = get_db(); cur = db.cursor()
+        cur.execute("SELECT aktywny FROM roster WHERE id=%s", (player_id,))
+        row = cur.fetchone()
+        if not row: return jsonify({"ok": False})
+        new_status = not row["aktywny"]
+        cur.execute("UPDATE roster SET aktywny=%s WHERE id=%s", (new_status, player_id))
+        db.commit(); cur.close()
+        return jsonify({"ok": True, "aktywny": new_status})
+    except Exception as e:
+        try: get_db().rollback()
+        except: pass
+        return jsonify({"ok": False, "error": str(e)})
 
 
 @app.route("/roster/<int:player_id>/delete")
