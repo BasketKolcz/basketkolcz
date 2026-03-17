@@ -4264,109 +4264,173 @@ def mecz_edytuj(match_id):
 
     gtk_name = (m.get("nazwa_gtk","") or "").strip() or get_setting("gtk_name") or "GTK"
 
-    # Pobierz zawodników GTK z tego meczu
-    cur.execute("SELECT id,nr,pts,p2m,p2a,p3m,p3a,ftm,fta,ast,oreb,dreb,br,fd,finishes,roster_id FROM player_stats WHERE match_id=%s AND druzyna='gtk' ORDER BY nr", (match_id,))
+    cur.execute("""SELECT id,nr,pts,p2m,p2a,p3m,p3a,ftm,fta,roster_id
+                   FROM player_stats WHERE match_id=%s AND druzyna='gtk'
+                   ORDER BY nr""", (match_id,))
     players = list(cur.fetchall())
 
-    # Pobierz roster
-    cur.execute("""SELECT r.id, r.imie, r.nazwisko, r.pseudonim,
-                   COALESCE(string_agg(DISTINCT pa.nr::text, ','), '') as numery
-                   FROM roster r
-                   LEFT JOIN player_aliases pa ON pa.roster_id=r.id
-                   WHERE r.aktywny=TRUE
-                   GROUP BY r.id,r.imie,r.nazwisko,r.pseudonim
-                   ORDER BY r.nazwisko,r.imie""")
+    cur.execute("""SELECT r.id, r.imie, r.nazwisko, r.pseudonim
+                   FROM roster r WHERE r.aktywny=TRUE
+                   ORDER BY r.nazwisko, r.imie""")
     roster_list = list(cur.fetchall())
 
     if request.method == "POST":
+        sezon = m.get("sezon","")
         for p in players:
-            rid_key = f"roster_{p['id']}"
-            rid = request.form.get(rid_key,"")
+            rid = request.form.get(f"roster_{p['id']}","")
             rid_val = int(rid) if rid and rid.isdigit() else None
             cur.execute("UPDATE player_stats SET roster_id=%s WHERE id=%s", (rid_val, p['id']))
-
-            # Jeśli wybrano zawodnika — dodaj alias numeru jeśli nie istnieje
-            sezon = m.get("sezon","")
             if rid_val and p['nr']:
                 try:
-                    cur.execute("INSERT INTO player_aliases (roster_id,nr,sezon) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                    cur.execute("""INSERT INTO player_aliases (roster_id,nr,sezon)
+                                   VALUES (%s,%s,%s) ON CONFLICT DO NOTHING""",
                                 (rid_val, p['nr'], sezon))
                 except: pass
-
         db.commit(); cur.close()
         flash("✓ Przypisania zawodników zapisane","success")
         return redirect(url_for("mecz", match_id=match_id))
 
     cur.close()
 
-    # Buduj opcje rostera
-    roster_opts = "<option value=''>— nie przypisany —</option>" + "".join(
-        f'<option value="{r["id"]}">{r["imie"]} {r["nazwisko"]}'
-        + (f' ({r["pseudonim"]})' if r['pseudonim'] else '')
-        + (f' [#{r["numery"]}]' if r['numery'] else '') + '</option>'
+    # JSON roster dla JS
+    import json as _json
+    roster_json = _json.dumps([
+        {"id": r["id"],
+         "name": f"{r['imie']} {r['nazwisko']}" + (f" ({r['pseudonim']})" if r['pseudonim'] else "")}
         for r in roster_list
-    )
+    ])
 
+    # Aktualne przypisania {ps_id: roster_id}
+    current = {p['id']: (p.get('roster_id') or "") for p in players}
+    current_json = _json.dumps({str(k): str(v) if v else "" for k,v in current.items()})
+
+    # Wiersze tabeli — same numery i statystyki, select wypełniany przez JS
     rows = ""
-    for p in players:
-        pts = p['pts']
+    for i, p in enumerate(players):
         fga = p.get('p2a',0)+p.get('p3a',0)
         efg = f"{(p.get('p2m',0)+1.5*p.get('p3m',0))/fga:.0%}" if fga else "—"
-        # Aktualne przypisanie
-        cur_rid = p.get('roster_id') or ""
-        opts = roster_opts.replace(f"value='{cur_rid}'", f"value='{cur_rid}' selected") if cur_rid else roster_opts
-
-        rows += f"""<tr>
-            <td class="fw-bold" style="width:60px">#{p['nr']}</td>
-            <td class="fw-bold" style="color:#1a2b4a">{pts}</td>
-            <td style="font-size:.8rem">{p.get('p2m',0)}/{p.get('p2a',0)} | {p.get('p3m',0)}/{p.get('p3a',0)}</td>
-            <td style="font-size:.8rem">{efg}</td>
+        bg = "background:#f8f9ff" if i%2==0 else ""
+        rows += f"""<tr style="{bg}">
+            <td class="fw-bold" style="width:55px;font-size:1rem">#{p['nr']}</td>
+            <td class="fw-bold" style="color:#1a2b4a;width:50px">{p['pts']}</td>
+            <td style="font-size:.78rem;color:#888;width:90px">{p.get('p2m',0)}/{p.get('p2a',0)} | {p.get('p3m',0)}/{p.get('p3a',0)}</td>
+            <td style="font-size:.78rem;color:#888;width:55px">{efg}</td>
             <td>
-              <select name="roster_{p['id']}" class="form-select form-select-sm" style="min-width:200px">
-                {opts}
+              <select name="roster_{p['id']}" id="sel_{p['id']}"
+                      class="form-select form-select-sm roster-sel"
+                      data-ps-id="{p['id']}"
+                      onchange="updateSelects()">
               </select>
             </td>
         </tr>"""
 
     dt = m['data_meczu'].strftime('%d.%m.%Y') if m['data_meczu'] else ""
+
     content = f"""
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <div class="page-title mb-0">✏️ Przypisz zawodników — {gtk_name}</div>
     <div style="font-size:.8rem;color:#888">{m['przeciwnik']} · {dt}</div>
   </div>
-  <a href="/mecz/{match_id}" class="btn btn-outline-secondary btn-sm">← Wróć do raportu</a>
+  <a href="/mecz/{match_id}" class="btn btn-outline-secondary btn-sm">← Wróć</a>
 </div>
 
-<div class="card p-3 mb-3" style="background:#fff8e1;border:1px solid #ffe082">
-  <div style="font-size:.83rem">
-    <b>Jak to działa:</b> Przypisz numer koszulki do zawodnika z rostera.
-    System zapamięta ten numer jako alias — w przyszłości automatycznie rozpozna tego zawodnika.
-    Możesz też <a href="/roster/nowy">dodać nowego zawodnika</a> jeśli go nie ma na liście.
+<div class="card p-2 mb-3" style="background:#e8f5e9;border:1px solid #a5d6a7">
+  <div style="font-size:.82rem;color:#1a6b3c">
+    <b>Wybierz zawodnika</b> z listy dla każdego numeru koszulki.
+    Wybrany zawodnik znika z pozostałych list.
+    Numer zostanie automatycznie przypisany do zawodnika w rosterze.
+    <a href="/roster/nowy" style="color:#1a6b3c">+ Dodaj zawodnika do rostera</a>
   </div>
 </div>
 
 <div class="card">
   <div class="card-body p-3">
-    <form method="POST">
+    <form method="POST" id="assignForm">
       <div class="table-responsive">
-        <table class="table table-hover mb-0">
+        <table class="table table-hover mb-0" style="table-layout:fixed">
           <thead><tr>
-            <th>#</th><th>PTS</th><th>2PT | 3PT</th><th>eFG%</th>
-            <th>Zawodnik z rostera</th>
+            <th style="width:55px">#</th>
+            <th style="width:50px">PTS</th>
+            <th style="width:90px">2PT|3PT</th>
+            <th style="width:55px">eFG%</th>
+            <th>Zawodnik</th>
           </tr></thead>
-          <tbody>{rows if rows else '<tr><td colspan="5" class="text-center text-muted py-3">Brak danych zawodników</td></tr>'}</tbody>
+          <tbody>{rows}</tbody>
         </table>
       </div>
       <div class="d-flex gap-2 mt-3">
-        <button type="submit" class="btn btn-primary fw-bold">✓ Zapisz przypisania</button>
+        <button type="submit" class="btn btn-primary fw-bold">✓ Zapisz</button>
         <a href="/mecz/{match_id}" class="btn btn-outline-secondary">Anuluj</a>
-        <a href="/roster" class="btn btn-outline-primary ms-auto">👥 Zarządzaj rosterem</a>
+        <button type="button" class="btn btn-outline-warning btn-sm ms-auto"
+                onclick="clearAll()">Wyczyść wszystkie</button>
       </div>
     </form>
   </div>
 </div>"""
-    return render_template_string(base(content, active="history"))
+
+    scripts = f"""<script>
+const ROSTER = {roster_json};
+const CURRENT = {current_json};
+
+function getSelected() {{
+  const sel = {{}};
+  document.querySelectorAll('.roster-sel').forEach(s => {{
+    if(s.value) sel[s.value] = s.dataset.psId;
+  }});
+  return sel;
+}}
+
+function updateSelects() {{
+  const selected = getSelected();
+  document.querySelectorAll('.roster-sel').forEach(sel => {{
+    const curVal = sel.value;
+    sel.innerHTML = '<option value="">— nie przypisany —</option>';
+    ROSTER.forEach(r => {{
+      const usedBy = selected[r.id.toString()];
+      // Pokaż jeśli: nie wybrany przez nikogo LUB wybrany przez ten sam select
+      if(!usedBy || usedBy === sel.dataset.psId) {{
+        const opt = document.createElement('option');
+        opt.value = r.id;
+        opt.textContent = r.name;
+        if(r.id.toString() === curVal) opt.selected = true;
+        sel.appendChild(opt);
+      }}
+    }});
+  }});
+}}
+
+function clearAll() {{
+  document.querySelectorAll('.roster-sel').forEach(s => s.value = '');
+  updateSelects();
+}}
+
+// Inicjalizacja — wypełnij z aktualnych przypisań
+document.addEventListener('DOMContentLoaded', () => {{
+  // Najpierw wypełnij wszystkie puste
+  document.querySelectorAll('.roster-sel').forEach(sel => {{
+    sel.innerHTML = '<option value="">— nie przypisany —</option>';
+    ROSTER.forEach(r => {{
+      const opt = document.createElement('option');
+      opt.value = r.id; opt.textContent = r.name;
+      sel.appendChild(opt);
+    }});
+  }});
+  // Ustaw zapisane wartości
+  const psIds = Object.keys(CURRENT);
+  psIds.forEach(psId => {{
+    const rid = CURRENT[psId];
+    if(rid) {{
+      const sel = document.querySelector(`[data-ps-id="${{psId}}"]`);
+      if(sel) sel.value = rid;
+    }}
+  }});
+  // Teraz odśwież listy
+  updateSelects();
+}});
+</script>"""
+
+    return render_template_string(base(content, scripts, active="history"))
 
 
 if __name__ == "__main__":
