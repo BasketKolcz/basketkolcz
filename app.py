@@ -545,6 +545,183 @@ def index():
     return render_template_string(base(content, active="home"))
 
 # ══════════════════════════════════════════════════════════════════════════════
+# WALIDACJA
+# ══════════════════════════════════════════════════════════════════════════════
+
+VALID_CODES = {
+    "2","0/2","3","0/3","BR","P","F",
+    "2+1","2+0","3+1","3+0",
+    "2D","0/2D","2D+1",
+    "1/2W","2/2W","0/2W",
+    "1/3W","2/3W","3/3W","0/3W",
+    "1/2WL","2/2WL","0/2WL",
+    "1/1WT","0/1WT",
+    "0D0/2W","2D0/1W","2D1/1W"
+}
+
+def read_meta(wb):
+    """Odczytaj arkusz META i zwróć słownik danych"""
+    meta = {}
+    for sn in wb.sheetnames:
+        if sn.upper() == "META":
+            ws = wb[sn]
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if not row[0]: continue
+                key = str(row[0]).strip().lower()
+                val = str(row[1]).strip() if row[1] is not None else ""
+                if "drużyna a" in key or "druzyna a" in key: meta["nazwa_a"] = val
+                if "drużyna b" in key or "druzyna b" in key: meta["nazwa_b"] = val
+                if "wynik a"   in key: meta["wynik_a"] = val
+                if "wynik b"   in key: meta["wynik_b"] = val
+                if "data"      in key: meta["data"] = val
+                if "rozgrywki" in key: meta["rozgrywki"] = val
+                if "runda"     in key or "kolejka" in key: meta["runda"] = val
+            break
+    return meta
+
+def validate_workbook(wb):
+    """
+    Zwraca dict:
+      errors   — błędy krytyczne (lista str)
+      warnings — ostrzeżenia (lista str)
+      info     — informacje (lista str)
+      meta     — dane z META
+      names    — (name_a, name_b)
+    """
+    errors = []; warnings = []; info = []
+
+    sheets_data = [s for s in wb.sheetnames if s.upper() not in ("META","KODY","LEGENDA")]
+
+    if len(sheets_data) < 2:
+        errors.append(f"Brakuje arkuszy danych — znaleziono {len(sheets_data)}, wymagane 2 (GTK + przeciwnik)")
+        return {"errors":errors,"warnings":warnings,"info":info,"meta":{},"names":("","") }
+
+    name_a, name_b = sheets_data[0], sheets_data[1]
+    meta = read_meta(wb)
+
+    # ── 1. Nazwy drużyn ────────────────────────────────────────────────────
+    meta_a = meta.get("nazwa_a","")
+    meta_b = meta.get("nazwa_b","")
+    if meta_a and meta_a not in ("TWOJA_DRUZYNA","TWOJA_DRUŻYNA","-",""):
+        if meta_a.upper() != name_a.upper():
+            warnings.append(
+                f"Nazwa drużyny A w META (<b>{meta_a}</b>) "
+                f"różni się od nazwy arkusza (<b>{name_a}</b>). "
+                f"Aplikacja użyje nazwy arkusza."
+            )
+        else:
+            info.append(f"✓ Nazwa drużyny A: <b>{name_a}</b> — zgodna z META")
+    if meta_b and meta_b not in ("RYWAL","-",""):
+        if meta_b.upper() != name_b.upper():
+            warnings.append(
+                f"Nazwa drużyny B w META (<b>{meta_b}</b>) "
+                f"różni się od nazwy arkusza (<b>{name_b}</b>). "
+                f"Aplikacja użyje nazwy arkusza."
+            )
+        else:
+            info.append(f"✓ Nazwa drużyny B: <b>{name_b}</b> — zgodna z META")
+
+    # ── 2. Parsuj i sprawdź wyniki ─────────────────────────────────────────
+    stats_a = parse_team_sheet(wb[name_a])
+    stats_b = parse_team_sheet(wb[name_b])
+    suma_a  = suma_quarters(stats_a)
+    suma_b  = suma_quarters(stats_b)
+    pts_a   = suma_a.get("pts",0)
+    pts_b   = suma_b.get("pts",0)
+
+    # Wynik końcowy z META
+    try:
+        meta_pts_a = int(meta.get("wynik_a","")) if meta.get("wynik_a") else None
+        meta_pts_b = int(meta.get("wynik_b","")) if meta.get("wynik_b") else None
+    except: meta_pts_a = meta_pts_b = None
+
+    if meta_pts_a is not None:
+        if meta_pts_a != pts_a:
+            errors.append(
+                f"❌ Wynik <b>{name_a}</b> w META: <b>{meta_pts_a}</b> pkt, "
+                f"ale suma z kodowania: <b>{pts_a}</b> pkt "
+                f"(różnica: {pts_a - meta_pts_a:+d})"
+            )
+        else:
+            info.append(f"✓ Wynik {name_a}: <b>{pts_a}</b> pkt — zgodny z META")
+
+    if meta_pts_b is not None:
+        if meta_pts_b != pts_b:
+            errors.append(
+                f"❌ Wynik <b>{name_b}</b> w META: <b>{meta_pts_b}</b> pkt, "
+                f"ale suma z kodowania: <b>{pts_b}</b> pkt "
+                f"(różnica: {pts_b - meta_pts_b:+d})"
+            )
+        else:
+            info.append(f"✓ Wynik {name_b}: <b>{pts_b}</b> pkt — zgodny z META")
+
+    # ── 3. Wynik per kwarta ────────────────────────────────────────────────
+    for sheet_name, stats in [(name_a, stats_a), (name_b, stats_b)]:
+        total_check = sum(stats["quarter"].get(q,{}).get("pts",0) for q in [1,2,3,4])
+        suma = suma_quarters(stats)
+        if total_check != suma.get("pts",0):
+            warnings.append(
+                f"⚠️ {sheet_name}: suma kwart ({total_check}) "
+                f"≠ łączna suma punktów ({suma.get('pts',0)})"
+            )
+        else:
+            q_pts = [stats["quarter"].get(q,{}).get("pts",0) for q in [1,2,3,4]]
+            info.append(f"✓ {sheet_name} per kwarta: {q_pts[0]}+{q_pts[1]}+{q_pts[2]}+{q_pts[3]} = <b>{total_check}</b>")
+
+    # ── 4. Brakujące dane (puste kolumny A/B/C) ────────────────────────────
+    for sheet_name in [name_a, name_b]:
+        ws = wb[sheet_name]
+        empty_rows = []
+        for i, row in enumerate(ws.iter_rows(min_row=2, max_row=200, values_only=True), 2):
+            if not any(v is not None for v in row[:4]): break
+            missing = []
+            if row[0] is None: missing.append("Kwarta(A)")
+            if row[2] is None: missing.append("Kod(C)")
+            if missing:
+                empty_rows.append(f"wiersz {i}: brak {', '.join(missing)}")
+        if empty_rows:
+            sample = empty_rows[:5]
+            warnings.append(
+                f"⚠️ {sheet_name} — brakujące dane w {len(empty_rows)} wierszach: "
+                f"{'; '.join(sample)}"
+                + (f" (i {len(empty_rows)-5} więcej...)" if len(empty_rows)>5 else "")
+            )
+        else:
+            info.append(f"✓ {sheet_name}: wszystkie wiersze mają wymagane dane")
+
+    # ── 5. Nieznane kody akcji ─────────────────────────────────────────────
+    for sheet_name in [name_a, name_b]:
+        ws = wb[sheet_name]
+        unknown = {}
+        for i, row in enumerate(ws.iter_rows(min_row=2, max_row=500, values_only=True), 2):
+            if not any(v is not None for v in row[:4]): break
+            raw_c = str(row[2]).strip() if row[2] is not None else ""
+            if not raw_c: continue
+            for code in [c.strip() for c in raw_c.split(";") if c.strip()]:
+                if code not in VALID_CODES:
+                    if code not in unknown: unknown[code] = []
+                    unknown[code].append(i)
+        if unknown:
+            details = "; ".join(
+                f"<b>{k}</b> (wiersze: {', '.join(map(str,v[:3]))}{'...' if len(v)>3 else ''})"
+                for k,v in list(unknown.items())[:8]
+            )
+            errors.append(
+                f"❌ {sheet_name} — nieznane kody akcji: {details}"
+            )
+        else:
+            info.append(f"✓ {sheet_name}: wszystkie kody akcji są prawidłowe")
+
+    return {
+        "errors":   errors,
+        "warnings": warnings,
+        "info":     info,
+        "meta":     meta,
+        "names":    (name_a, name_b),
+        "pts":      (pts_a, pts_b),
+    }
+
+# ══════════════════════════════════════════════════════════════════════════════
 # UPLOAD
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -558,32 +735,156 @@ def upload():
 
     sezon      = request.form.get("sezon","2024/25")
     data_meczu = request.form.get("data_meczu") or None
+    force      = request.form.get("force","") == "1"
 
     try:
-        wb = openpyxl.load_workbook(f, data_only=True)
-        sheets = [s for s in wb.sheetnames if s.upper() not in ("META","KODY","LEGENDA")]
-        if len(sheets) < 2:
-            flash("Plik musi mieć 2 arkusze (GTK + przeciwnik)","error")
-            return redirect(url_for("index"))
+        file_bytes = f.read()
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
 
-        name_gtk = sheets[0]
-        name_opp = sheets[1]
-        stats_gtk = parse_team_sheet(wb[name_gtk])
-        stats_opp = parse_team_sheet(wb[name_opp])
+        # Walidacja
+        report = validate_workbook(wb)
 
-        match_id = save_match_to_db(name_opp, sezon, data_meczu, stats_gtk, stats_opp)
+        # Jeśli są błędy krytyczne i user nie potwierdził — pokaż raport
+        if report["errors"] and not force:
+            # Zapisz plik w sesji (base64) do ponownego użycia
+            import base64
+            session["pending_file"]       = base64.b64encode(file_bytes).decode()
+            session["pending_sezon"]      = sezon
+            session["pending_data_meczu"] = data_meczu
+            session["validation_report"]  = {
+                "errors":   report["errors"],
+                "warnings": report["warnings"],
+                "info":     report["info"],
+                "names":    list(report["names"]),
+                "pts":      list(report["pts"]),
+            }
+            return redirect(url_for("validation_report"))
 
-        # Zapisz do sesji dla raportu
-        session["match_id"] = match_id
-        session["name_gtk"] = name_gtk
-        session["name_opp"] = name_opp
+        # Jeśli tylko ostrzeżenia — pokaż raport z możliwością zapisu
+        if report["warnings"] and not force:
+            import base64
+            session["pending_file"]       = base64.b64encode(file_bytes).decode()
+            session["pending_sezon"]      = sezon
+            session["pending_data_meczu"] = data_meczu
+            session["validation_report"]  = {
+                "errors":   report["errors"],
+                "warnings": report["warnings"],
+                "info":     report["info"],
+                "names":    list(report["names"]),
+                "pts":      list(report["pts"]),
+            }
+            return redirect(url_for("validation_report"))
 
-        flash(f"Mecz {name_gtk} vs {name_opp} zapisany!","success")
-        return redirect(url_for("mecz", match_id=match_id))
+        # Brak błędów — zapisz od razu
+        return _do_save(wb, report["names"][0], report["names"][1], sezon, data_meczu)
 
     except Exception as e:
         flash(f"Błąd: {str(e)}","error")
         return redirect(url_for("index"))
+
+
+@app.route("/walidacja")
+def validation_report():
+    report = session.get("validation_report")
+    if not report:
+        return redirect(url_for("index"))
+
+    errors   = report.get("errors",[])
+    warnings = report.get("warnings",[])
+    info     = report.get("info",[])
+    names    = report.get("names",["?","?"])
+    pts      = report.get("pts",[0,0])
+    has_errors = len(errors) > 0
+
+    def render_items(items, cls, icon):
+        if not items: return ""
+        rows = "".join(f'<div class="val-item {cls}"><span class="val-icon">{icon}</span><span>{it}</span></div>' for it in items)
+        return rows
+
+    content = f"""
+<div class="page-title">🔍 Raport walidacji pliku</div>
+
+<div class="card mb-3 p-3">
+  <div class="d-flex gap-3 align-items-center flex-wrap">
+    <div>
+      <div style="font-size:.8rem;color:#888">Drużyny</div>
+      <div class="fw-bold">{names[0]} vs {names[1]}</div>
+    </div>
+    <div>
+      <div style="font-size:.8rem;color:#888">Wynik z kodowania</div>
+      <div class="fw-bold">{pts[0]} : {pts[1]}</div>
+    </div>
+    <div class="ms-auto d-flex gap-2 flex-wrap">
+      <a href="/" class="btn btn-outline-secondary btn-sm">← Anuluj i wróć</a>
+      {'<span class="btn btn-secondary btn-sm disabled">Zapisz (popraw błędy)</span>' if has_errors else
+       '<form method="POST" action="/upload/force" style="display:inline"><button type="submit" class="btn btn-success btn-sm fw-bold">✓ Zapisz mimo ostrzeżeń</button></form>'}
+    </div>
+  </div>
+</div>
+
+<style>
+.val-section{{margin-bottom:1rem}}
+.val-section-title{{font-size:.72rem;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:.5rem;padding:.3rem .6rem;border-radius:6px}}
+.val-item{{display:flex;gap:.75rem;align-items:flex-start;padding:.5rem .75rem;border-radius:8px;margin-bottom:.3rem;font-size:.85rem;line-height:1.4}}
+.val-icon{{font-size:1rem;flex-shrink:0;margin-top:1px}}
+.val-error{{background:#fff0f0;border-left:3px solid #e53935}}
+.val-warning{{background:#fffde7;border-left:3px solid #f9a825}}
+.val-info{{background:#f1f8e9;border-left:3px solid #43a047}}
+</style>
+
+<div class="row g-3">
+<div class="col-12">
+
+{'<div class="val-section"><div class="val-section-title" style="background:#ffebee;color:#c62828">🚫 Błędy krytyczne (' + str(len(errors)) + ') — wymagana poprawa</div>' + render_items(errors,"val-error","🚫") + '</div>' if errors else ''}
+
+{'<div class="val-section"><div class="val-section-title" style="background:#fff8e1;color:#f57f17">⚠️ Ostrzeżenia (' + str(len(warnings)) + ') — można zapisać, ale warto sprawdzić</div>' + render_items(warnings,"val-warning","⚠️") + '</div>' if warnings else ''}
+
+{'<div class="val-section"><div class="val-section-title" style="background:#e8f5e9;color:#2e7d32">✓ Poprawne (' + str(len(info)) + ')</div>' + render_items(info,"val-info","✓") + '</div>' if info else ''}
+
+</div>
+</div>
+
+{'<div class="card p-3 mt-2" style="background:#fff0f0;border:1px solid #ffcdd2"><b>Plik zawiera błędy krytyczne.</b> Popraw je w pliku Excel i wgraj ponownie.</div>' if has_errors else
+ '<div class="card p-3 mt-2" style="background:#fffde7;border:1px solid #fff176"><b>Plik zawiera ostrzeżenia.</b> Możesz zapisać mecz mimo ostrzeżeń klikając przycisk powyżej, lub poprawić plik i wgrać ponownie.</div>'}
+"""
+    return render_template_string(base(content, active="home"))
+
+
+@app.route("/upload/force", methods=["POST"])
+def upload_force():
+    """Zapisz plik mimo ostrzeżeń (po potwierdzeniu przez użytkownika)"""
+    import base64
+    file_b64  = session.get("pending_file","")
+    sezon     = session.get("pending_sezon","2024/25")
+    data_meczu= session.get("pending_data_meczu")
+
+    if not file_b64:
+        flash("Sesja wygasła — wgraj plik ponownie","error")
+        return redirect(url_for("index"))
+
+    try:
+        file_bytes = base64.b64decode(file_b64)
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+        report = validate_workbook(wb)
+        return _do_save(wb, report["names"][0], report["names"][1], sezon, data_meczu)
+    except Exception as e:
+        flash(f"Błąd zapisu: {str(e)}","error")
+        return redirect(url_for("index"))
+
+
+def _do_save(wb, name_gtk, name_opp, sezon, data_meczu):
+    """Właściwy zapis meczu do bazy"""
+    stats_gtk = parse_team_sheet(wb[name_gtk])
+    stats_opp = parse_team_sheet(wb[name_opp])
+    match_id  = save_match_to_db(name_opp, sezon, data_meczu, stats_gtk, stats_opp)
+    session["match_id"]  = match_id
+    session["name_gtk"]  = name_gtk
+    session["name_opp"]  = name_opp
+    # Wyczyść pending
+    for k in ["pending_file","pending_sezon","pending_data_meczu","validation_report"]:
+        session.pop(k, None)
+    flash(f"✓ Mecz {name_gtk} vs {name_opp} zapisany pomyślnie!","success")
+    return redirect(url_for("mecz", match_id=match_id))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HISTORIA MECZÓW
