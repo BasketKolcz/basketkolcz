@@ -10,6 +10,8 @@ from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "basketkolcz2025secret")
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB max upload
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -925,6 +927,32 @@ def validate_workbook(wb):
 # UPLOAD
 # ══════════════════════════════════════════════════════════════════════════════
 
+import tempfile, base64
+
+def _do_save(wb, name_gtk, name_opp, sezon, data_meczu):
+    """Właściwy zapis meczu do bazy"""
+    try:
+        init_db()
+    except: pass
+    stats_gtk = parse_team_sheet(wb[name_gtk])
+    stats_opp = parse_team_sheet(wb[name_opp])
+    match_id  = save_match_to_db(name_opp, sezon, data_meczu, stats_gtk, stats_opp)
+    session["match_id"]  = match_id
+    session["name_gtk"]  = name_gtk
+    session["name_opp"]  = name_opp
+    # Wyczyść pending
+    for k in ["pending_token","pending_sezon","pending_data_meczu","validation_report"]:
+        session.pop(k, None)
+    flash(f"✓ Mecz {name_gtk} vs {name_opp} zapisany pomyślnie!","success")
+    return redirect(url_for("mecz", match_id=match_id))
+
+
+# Tymczasowy storage dla plików oczekujących na potwierdzenie
+# Używamy katalogu /tmp (dostępny na Render)
+PENDING_DIR = "/tmp/basketkolcz_pending"
+os.makedirs(PENDING_DIR, exist_ok=True)
+
+
 @app.route("/upload", methods=["POST"])
 def upload():
     if "file" not in request.files:
@@ -935,7 +963,6 @@ def upload():
 
     sezon      = request.form.get("sezon","2024/25")
     data_meczu = request.form.get("data_meczu") or None
-    force      = request.form.get("force","") == "1"
 
     try:
         file_bytes = f.read()
@@ -944,11 +971,18 @@ def upload():
         # Walidacja
         report = validate_workbook(wb)
 
-        # Jeśli są błędy krytyczne i user nie potwierdził — pokaż raport
-        if report["errors"] and not force:
-            # Zapisz plik w sesji (base64) do ponownego użycia
-            import base64
-            session["pending_file"]       = base64.b64encode(file_bytes).decode()
+        has_issues = bool(report["errors"] or report["warnings"])
+
+        if has_issues:
+            # Zapisz plik do /tmp z unikalnym tokenem
+            import uuid
+            token = str(uuid.uuid4())
+            tmp_path = os.path.join(PENDING_DIR, f"{token}.xlsx")
+            with open(tmp_path, "wb") as fp:
+                fp.write(file_bytes)
+
+            # Zapisz tylko lekkie dane w sesji (bez pliku!)
+            session["pending_token"]      = token
             session["pending_sezon"]      = sezon
             session["pending_data_meczu"] = data_meczu
             session["validation_report"]  = {
@@ -960,26 +994,12 @@ def upload():
             }
             return redirect(url_for("validation_report"))
 
-        # Jeśli tylko ostrzeżenia — pokaż raport z możliwością zapisu
-        if report["warnings"] and not force:
-            import base64
-            session["pending_file"]       = base64.b64encode(file_bytes).decode()
-            session["pending_sezon"]      = sezon
-            session["pending_data_meczu"] = data_meczu
-            session["validation_report"]  = {
-                "errors":   report["errors"],
-                "warnings": report["warnings"],
-                "info":     report["info"],
-                "names":    list(report["names"]),
-                "pts":      list(report["pts"]),
-            }
-            return redirect(url_for("validation_report"))
-
-        # Brak błędów — zapisz od razu
+        # Brak problemów — zapisz od razu
         return _do_save(wb, report["names"][0], report["names"][1], sezon, data_meczu)
 
     except Exception as e:
-        flash(f"Błąd: {str(e)}","error")
+        import traceback
+        flash(f"Błąd wgrywania: {str(e)}","error")
         return redirect(url_for("index"))
 
 
@@ -1015,7 +1035,7 @@ def validation_report():
       <div class="fw-bold">{pts[0]} : {pts[1]}</div>
     </div>
     <div class="ms-auto d-flex gap-2 flex-wrap">
-      <a href="/" class="btn btn-outline-secondary btn-sm">← Anuluj i wróć</a>
+      <a href="/" class="btn btn-outline-secondary btn-sm">← Anuluj</a>
       {'<span class="btn btn-secondary btn-sm disabled">Zapisz (popraw błędy)</span>' if has_errors else
        '<form method="POST" action="/upload/force" style="display:inline"><button type="submit" class="btn btn-success btn-sm fw-bold">✓ Zapisz mimo ostrzeżeń</button></form>'}
     </div>
@@ -1032,59 +1052,45 @@ def validation_report():
 .val-info{{background:#f1f8e9;border-left:3px solid #43a047}}
 </style>
 
-<div class="row g-3">
-<div class="col-12">
-
+<div class="card p-3">
 {'<div class="val-section"><div class="val-section-title" style="background:#ffebee;color:#c62828">🚫 Błędy krytyczne (' + str(len(errors)) + ') — wymagana poprawa</div>' + render_items(errors,"val-error","🚫") + '</div>' if errors else ''}
-
-{'<div class="val-section"><div class="val-section-title" style="background:#fff8e1;color:#f57f17">⚠️ Ostrzeżenia (' + str(len(warnings)) + ') — można zapisać, ale warto sprawdzić</div>' + render_items(warnings,"val-warning","⚠️") + '</div>' if warnings else ''}
-
+{'<div class="val-section"><div class="val-section-title" style="background:#fff8e1;color:#f57f17">⚠️ Ostrzeżenia (' + str(len(warnings)) + ')</div>' + render_items(warnings,"val-warning","⚠️") + '</div>' if warnings else ''}
 {'<div class="val-section"><div class="val-section-title" style="background:#e8f5e9;color:#2e7d32">✓ Poprawne (' + str(len(info)) + ')</div>' + render_items(info,"val-info","✓") + '</div>' if info else ''}
-
-</div>
 </div>
 
-{'<div class="card p-3 mt-2" style="background:#fff0f0;border:1px solid #ffcdd2"><b>Plik zawiera błędy krytyczne.</b> Popraw je w pliku Excel i wgraj ponownie.</div>' if has_errors else
- '<div class="card p-3 mt-2" style="background:#fffde7;border:1px solid #fff176"><b>Plik zawiera ostrzeżenia.</b> Możesz zapisać mecz mimo ostrzeżeń klikając przycisk powyżej, lub poprawić plik i wgrać ponownie.</div>'}
+{'<div class="card p-3 mt-2" style="background:#fff0f0;border:1px solid #ffcdd2"><b>Plik zawiera błędy krytyczne.</b> Popraw plik i wgraj ponownie.</div>' if has_errors else '<div class="card p-3 mt-2" style="background:#fffde7;border:1px solid #fff176"><b>Plik zawiera ostrzeżenia.</b> Możesz zapisać mimo ostrzeżeń lub poprawić plik.</div>'}
 """
     return render_template_string(base(content, active="home"))
 
 
 @app.route("/upload/force", methods=["POST"])
 def upload_force():
-    """Zapisz plik mimo ostrzeżeń (po potwierdzeniu przez użytkownika)"""
-    import base64
-    file_b64  = session.get("pending_file","")
-    sezon     = session.get("pending_sezon","2024/25")
-    data_meczu= session.get("pending_data_meczu")
+    """Zapisz plik mimo ostrzeżeń"""
+    token      = session.get("pending_token","")
+    sezon      = session.get("pending_sezon","2024/25")
+    data_meczu = session.get("pending_data_meczu")
 
-    if not file_b64:
+    if not token:
         flash("Sesja wygasła — wgraj plik ponownie","error")
         return redirect(url_for("index"))
 
+    tmp_path = os.path.join(PENDING_DIR, f"{token}.xlsx")
+    if not os.path.exists(tmp_path):
+        flash("Plik tymczasowy wygasł — wgraj ponownie","error")
+        return redirect(url_for("index"))
+
     try:
-        file_bytes = base64.b64decode(file_b64)
+        with open(tmp_path, "rb") as fp:
+            file_bytes = fp.read()
         wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
         report = validate_workbook(wb)
+        # Usuń plik tymczasowy
+        try: os.remove(tmp_path)
+        except: pass
         return _do_save(wb, report["names"][0], report["names"][1], sezon, data_meczu)
     except Exception as e:
         flash(f"Błąd zapisu: {str(e)}","error")
         return redirect(url_for("index"))
-
-
-def _do_save(wb, name_gtk, name_opp, sezon, data_meczu):
-    """Właściwy zapis meczu do bazy"""
-    stats_gtk = parse_team_sheet(wb[name_gtk])
-    stats_opp = parse_team_sheet(wb[name_opp])
-    match_id  = save_match_to_db(name_opp, sezon, data_meczu, stats_gtk, stats_opp)
-    session["match_id"]  = match_id
-    session["name_gtk"]  = name_gtk
-    session["name_opp"]  = name_opp
-    # Wyczyść pending
-    for k in ["pending_file","pending_sezon","pending_data_meczu","validation_report"]:
-        session.pop(k, None)
-    flash(f"✓ Mecz {name_gtk} vs {name_opp} zapisany pomyślnie!","success")
-    return redirect(url_for("mecz", match_id=match_id))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HISTORIA MECZÓW
