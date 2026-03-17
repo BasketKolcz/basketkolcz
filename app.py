@@ -2498,39 +2498,33 @@ def zawodnicy():
     cur.execute("SELECT COUNT(*) as cnt FROM matches WHERE sezon=%s", (sezon_filter,))
     n_matches = cur.fetchone()["cnt"]
 
-    # Agreguj po roster_id jeśli przypisany, inaczej po numerze
+    # Agreguj TYLKO po roster_id — nieprzypisani pokazani osobno jako "— nieprzypisany #nr"
     try:
         cur.execute("""
             SELECT
                 COALESCE(r.id::text, 'nr_'||ps.nr::text) as grp_id,
                 CASE WHEN r.id IS NOT NULL
-                     THEN r.imie || ' ' || r.nazwisko
-                     ELSE '#' || ps.nr::text
+                     THEN r.nazwisko || ' ' || r.imie
+                     ELSE '— nieprzypisany #' || ps.nr::text
                 END as nazwa,
-                CASE WHEN r.id IS NOT NULL
-                     THEN COALESCE(string_agg(DISTINCT ps.nr::text, ', '), '')
-                     ELSE ps.nr::text
-                END as numery,
                 SUM(ps.pts) as pts, SUM(ps.p2m) as p2m, SUM(ps.p2a) as p2a,
                 SUM(ps.p3m) as p3m, SUM(ps.p3a) as p3a,
                 SUM(ps.ftm) as ftm, SUM(ps.fta) as fta,
                 SUM(ps.ast) as ast, SUM(ps.oreb) as oreb, SUM(ps.dreb) as dreb,
                 SUM(ps.br) as br, SUM(ps.fd) as fd, SUM(ps.finishes) as finishes,
                 COUNT(DISTINCT ps.match_id) as mecze,
-                BOOL_OR(ps.roster_id IS NULL) as ma_nieprzypisane
+                (r.id IS NULL) as ma_nieprzypisane
             FROM player_stats ps
             JOIN matches m ON ps.match_id=m.id
             LEFT JOIN roster r ON ps.roster_id=r.id
             WHERE m.sezon=%s AND ps.druzyna='gtk'
             GROUP BY r.id, r.imie, r.nazwisko, ps.nr
-            ORDER BY pts DESC
+            ORDER BY ma_nieprzypisane ASC, pts DESC
         """, (sezon_filter,))
     except:
-        # Fallback — prosta agregacja po numerze
         cur.execute("""
             SELECT ps.nr::text as grp_id,
-                   '#'||ps.nr::text as nazwa,
-                   ps.nr::text as numery,
+                   '— nieprzypisany #'||ps.nr::text as nazwa,
                    SUM(ps.pts) as pts, SUM(ps.p2m) as p2m, SUM(ps.p2a) as p2a,
                    SUM(ps.p3m) as p3m, SUM(ps.p3a) as p3a,
                    SUM(ps.ftm) as ftm, SUM(ps.fta) as fta,
@@ -2553,14 +2547,14 @@ def zawodnicy():
         pm2=p.get("p2m",0); pm3=p.get("p3m",0)
         efg=f"{(pm2+1.5*pm3)/fga:.1%}" if fga else "-"
         ts =f"{p.get('pts',0)/(2*(fga+0.44*fta)):.1%}" if (fga+fta) else "-"
-        n = p.get("mecze",1); bg = "background:#f8f9ff" if i%2==0 else ""
-        nazwa = p.get('nazwa','?')
-        numery = p.get('numery','')
-        warn = ' <span title="Część meczów nie jest przypisana" style="color:#f9a825;font-size:.75rem">⚠</span>' if p.get('ma_nieprzypisane') else ''
+        n = p.get("mecze",1)
         ppg = f"{p.get('pts',0)/n:.1f}"
+        nie = p.get('ma_nieprzypisane')
+        nazwa = p.get('nazwa','?')
+        bg = "background:#fff8e1" if nie else ("background:#f8f9ff" if i%2==0 else "")
+        warn = ' <span title="Przypisz zawodnika w raporcie meczu" style="color:#f9a825;font-size:.75rem">⚠ nieprzypisany</span>' if nie else ''
         rows += f"""<tr style="{bg}">
             <td class="fw-bold">{nazwa}{warn}</td>
-            <td style="font-size:.75rem;color:#888">{numery}</td>
             <td>{ppg}</td>
             <td>{pm2}/{p.get('p2a',0)}</td>
             <td>{pm3}/{p.get('p3a',0)}</td>
@@ -2598,23 +2592,22 @@ def zawodnicy():
       <table class="table table-hover mb-0" id="zawTable">
         <thead><tr>
           {th('Zawodnik',0)}
-          {th('Nr',1)}
-          {th('PPG',2)}
-          {th('2PM/A',3)}
-          {th('3PM/A',4)}
-          {th('FTM/A',5)}
-          {th('eFG%',6)}
-          {th('TS%',7)}
-          {th('AST',8)}
-          {th('OREB',9)}
-          {th('DREB',10)}
-          {th('BR',11)}
-          {th('FIN',12)}
-          {th('PTS',13)}
-          {th('Mecze',14)}
+          {th('PPG',1)}
+          {th('2PM/A',2)}
+          {th('3PM/A',3)}
+          {th('FTM/A',4)}
+          {th('eFG%',5)}
+          {th('TS%',6)}
+          {th('AST',7)}
+          {th('OREB',8)}
+          {th('DREB',9)}
+          {th('BR',10)}
+          {th('FIN',11)}
+          {th('PTS',12)}
+          {th('Mecze',13)}
         </tr></thead>
         <tbody id="zawBody">
-          {rows if rows else '<tr><td colspan="15" class="text-center text-muted py-4">Brak danych zawodników</td></tr>'}
+          {rows if rows else '<tr><td colspan="14" class="text-center text-muted py-4">Brak danych zawodników</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -2650,7 +2643,7 @@ function sortZaw(col) {
     rows.forEach(r => tbody.appendChild(r));
 }
 // Domyślnie sortuj po PPG malejąco
-window.addEventListener('DOMContentLoaded', () => { _zawDir[2]=true; sortZaw(2); });
+window.addEventListener('DOMContentLoaded', () => { _zawDir[1]=true; sortZaw(1); });
 </script>"""
 
     return render_template_string(base(content, scripts, active="players"))
