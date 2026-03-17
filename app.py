@@ -101,8 +101,25 @@ def init_db():
         att3 INTEGER DEFAULT 0
     );
 
-    CREATE TABLE IF NOT EXISTS settings (
-        key VARCHAR(50) PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS roster (
+        id SERIAL PRIMARY KEY,
+        imie VARCHAR(50) NOT NULL,
+        nazwisko VARCHAR(50) NOT NULL DEFAULT '',
+        pseudonim VARCHAR(30) DEFAULT '',
+        aktywny BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS player_aliases (
+        id SERIAL PRIMARY KEY,
+        roster_id INTEGER REFERENCES roster(id) ON DELETE CASCADE,
+        nr INTEGER NOT NULL,
+        sezon VARCHAR(20) DEFAULT '',
+        UNIQUE(roster_id, nr, sezon)
+    );
+
+    ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS roster_id INTEGER REFERENCES roster(id) ON DELETE SET NULL;
+
         value VARCHAR(200)
     );
 
@@ -627,6 +644,7 @@ def nav(active="home"):
         ("history",  "/historia",  "📋", "Historia meczów"),
         ("season",   "/sezon",     "📊", "Statystyki sezonu"),
         ("players",  "/zawodnicy", "👤", "Zawodnicy sezonu"),
+        ("roster",   "/roster",    "👥", "Roster"),
         ("settings", "/ustawienia","⚙️", "Ustawienia"),
     ]
     links = ""
@@ -1838,6 +1856,7 @@ def mecz(match_id):
   </div>
   <div class="d-flex gap-2">
     <a href="/historia" class="btn btn-outline-secondary btn-sm">← Historia</a>
+    <a href="/mecz/{match_id}/edytuj" class="btn btn-outline-primary btn-sm">✏️ Przypisz zawodników</a>
     <a href="/mecz/{match_id}/export/xlsx" class="btn btn-warning btn-sm fw-bold">⬇ Excel</a>
     <a href="/mecz/{match_id}/export/pdf" class="btn btn-danger btn-sm fw-bold">⬇ PDF</a>
   </div>
@@ -2431,18 +2450,32 @@ def zawodnicy():
     cur.execute("SELECT COUNT(*) as cnt FROM matches WHERE sezon=%s", (sezon_filter,))
     n_matches = cur.fetchone()["cnt"]
 
+    # Agreguj po roster_id jeśli przypisany, inaczej po numerze
     cur.execute("""
-        SELECT ps.nr,
-               SUM(ps.pts) as pts, SUM(ps.p2m) as p2m, SUM(ps.p2a) as p2a,
-               SUM(ps.p3m) as p3m, SUM(ps.p3a) as p3a,
-               SUM(ps.ftm) as ftm, SUM(ps.fta) as fta,
-               SUM(ps.ast) as ast, SUM(ps.oreb) as oreb, SUM(ps.dreb) as dreb,
-               SUM(ps.br) as br, SUM(ps.fd) as fd, SUM(ps.finishes) as finishes,
-               COUNT(DISTINCT ps.match_id) as mecze
+        SELECT
+            COALESCE(r.id::text, 'nr_'||ps.nr::text) as grp_id,
+            CASE WHEN r.id IS NOT NULL
+                 THEN r.imie || ' ' || r.nazwisko
+                 ELSE '#' || ps.nr::text
+            END as nazwa,
+            CASE WHEN r.id IS NOT NULL
+                 THEN COALESCE(string_agg(DISTINCT ps.nr::text, ', ' ORDER BY ps.nr::text), '')
+                 ELSE ps.nr::text
+            END as numery,
+            SUM(ps.pts) as pts, SUM(ps.p2m) as p2m, SUM(ps.p2a) as p2a,
+            SUM(ps.p3m) as p3m, SUM(ps.p3a) as p3a,
+            SUM(ps.ftm) as ftm, SUM(ps.fta) as fta,
+            SUM(ps.ast) as ast, SUM(ps.oreb) as oreb, SUM(ps.dreb) as dreb,
+            SUM(ps.br) as br, SUM(ps.fd) as fd, SUM(ps.finishes) as finishes,
+            COUNT(DISTINCT ps.match_id) as mecze,
+            BOOL_OR(ps.roster_id IS NULL) as ma_nieprzypisane
         FROM player_stats ps
         JOIN matches m ON ps.match_id=m.id
+        LEFT JOIN roster r ON ps.roster_id=r.id
         WHERE m.sezon=%s AND ps.druzyna='gtk'
-        GROUP BY ps.nr ORDER BY pts DESC
+        GROUP BY grp_id, nazwa, CASE WHEN r.id IS NOT NULL THEN ps.nr::text ELSE ps.nr::text END,
+                 r.id, r.imie, r.nazwisko, ps.nr
+        ORDER BY pts DESC
     """, (sezon_filter,))
     players = cur.fetchall()
     cur.close()
@@ -2455,8 +2488,13 @@ def zawodnicy():
         efg=f"{(pm2+1.5*pm3)/fga:.1%}" if fga else "-"
         ts =f"{p.get('pts',0)/(2*(fga+0.44*fta)):.1%}" if (fga+fta) else "-"
         n = p.get("mecze",1); bg = "background:#f8f9ff" if i%2==0 else ""
+        nazwa = p.get('nazwa','?')
+        numery = p.get('numery','')
+        # Ostrzeżenie jeśli ma nieprzypisane mecze
+        warn = ' <span title="Część meczów nie jest przypisana do zawodnika" style="color:#f9a825;font-size:.75rem">⚠</span>' if p.get('ma_nieprzypisane') else ''
         rows += f"""<tr style="{bg}">
-            <td class="fw-bold">#{p['nr']}</td>
+            <td class="fw-bold">{nazwa}{warn}</td>
+            <td style="font-size:.75rem;color:#888">#{numery}</td>
             <td class="fw-bold" style="color:#1a2b4a;font-size:.95rem">{p.get('pts',0)}</td>
             <td style="font-size:.78rem;color:#888">{p.get('pts',0)/n:.1f}</td>
             <td>{pm2}/{p.get('p2a',0)}</td>
@@ -2488,7 +2526,8 @@ def zawodnicy():
     <div class="table-responsive">
       <table class="table table-hover mb-0">
         <thead><tr>
-          <th>#</th><th>PTS łącznie</th><th>PPG</th>
+          <th>Zawodnik</th><th style="font-size:.72rem">#</th>
+          <th>PTS łącznie</th><th>PPG</th>
           <th>2PM/A</th><th>3PM/A</th><th>FTM/A</th>
           <th>eFG%</th><th>TS%</th><th>AST</th>
           <th>OREB</th><th>DREB</th><th>BR</th><th>FIN</th><th>Mecze</th>
@@ -3059,6 +3098,294 @@ def template_szablon():
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return send_file(buf, as_attachment=True, download_name="SZABLON_MECZ.xlsx",
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ROSTER — zarządzanie zawodnikami
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/roster")
+def roster():
+    try: init_db()
+    except: pass
+    db = get_db(); cur = db.cursor()
+    cur.execute("""
+        SELECT r.id, r.imie, r.nazwisko, r.pseudonim, r.aktywny,
+               COALESCE(
+                 string_agg(DISTINCT pa.nr::text || CASE WHEN pa.sezon!='' THEN ' ('||pa.sezon||')' ELSE '' END, ', '
+                 ORDER BY pa.nr::text || CASE WHEN pa.sezon!='' THEN ' ('||pa.sezon||')' ELSE '' END), '—'
+               ) as numery
+        FROM roster r
+        LEFT JOIN player_aliases pa ON pa.roster_id = r.id
+        GROUP BY r.id, r.imie, r.nazwisko, r.pseudonim, r.aktywny
+        ORDER BY r.nazwisko, r.imie
+    """)
+    players = cur.fetchall()
+    cur.close()
+
+    rows = ""
+    for i, p in enumerate(players):
+        bg = "background:#f8f9ff" if i%2==0 else ""
+        aktywny = '<span class="badge-win" style="font-size:.7rem">aktywny</span>' if p['aktywny'] else '<span class="badge-draw" style="font-size:.7rem">nieaktywny</span>'
+        rows += f"""<tr style="{bg}">
+            <td class="fw-bold">{p['imie']} {p['nazwisko']}</td>
+            <td style="color:#888;font-size:.82rem">{p['pseudonim'] or '—'}</td>
+            <td style="font-size:.8rem">{p['numery']}</td>
+            <td>{aktywny}</td>
+            <td class="text-center">
+              <a href="/roster/{p['id']}/edit" class="btn btn-outline-primary btn-sm" style="font-size:.72rem">Edytuj</a>
+              <a href="/roster/{p['id']}/delete" class="btn btn-outline-danger btn-sm ms-1" style="font-size:.72rem"
+                 onclick="return confirm('Usunąć zawodnika?')">✕</a>
+            </td>
+        </tr>"""
+
+    content = f"""
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="page-title mb-0">👥 Roster — zawodnicy</div>
+  <a href="/roster/nowy" class="btn btn-primary btn-sm">+ Dodaj zawodnika</a>
+</div>
+<div class="card">
+  <div class="card-body p-2">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead><tr>
+          <th>Imię i nazwisko</th><th>Pseudonim</th><th>Numery koszulek</th><th>Status</th><th class="text-center">Akcje</th>
+        </tr></thead>
+        <tbody>
+          {rows if rows else '<tr><td colspan="5" class="text-center text-muted py-4">Brak zawodników — dodaj pierwszego</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>"""
+    return render_template_string(base(content, active="players"))
+
+
+@app.route("/roster/nowy", methods=["GET","POST"])
+@app.route("/roster/<int:player_id>/edit", methods=["GET","POST"])
+def roster_edit(player_id=None):
+    try: init_db()
+    except: pass
+    db = get_db(); cur = db.cursor()
+
+    if request.method == "POST":
+        imie     = request.form.get("imie","").strip()
+        nazwisko = request.form.get("nazwisko","").strip()
+        pseudonim= request.form.get("pseudonim","").strip()
+        aktywny  = request.form.get("aktywny","1") == "1"
+        # Numery — lista par (nr, sezon)
+        numery_raw = request.form.get("numery","").strip()
+
+        if not imie:
+            flash("Imię jest wymagane","error")
+            return redirect(request.url)
+
+        if player_id:
+            cur.execute("UPDATE roster SET imie=%s,nazwisko=%s,pseudonim=%s,aktywny=%s WHERE id=%s",
+                        (imie,nazwisko,pseudonim,aktywny,player_id))
+            cur.execute("DELETE FROM player_aliases WHERE roster_id=%s", (player_id,))
+        else:
+            cur.execute("INSERT INTO roster (imie,nazwisko,pseudonim,aktywny) VALUES (%s,%s,%s,%s) RETURNING id",
+                        (imie,nazwisko,pseudonim,aktywny))
+            player_id = cur.fetchone()["id"]
+
+        # Parsuj numery: "5, 12 (2024/25), 7 (2025/26)"
+        for part in numery_raw.split(","):
+            part = part.strip()
+            if not part: continue
+            import re as _re
+            m = _re.match(r'(\d+)\s*(?:\(([^)]+)\))?', part)
+            if m:
+                nr = int(m.group(1))
+                sezon = (m.group(2) or "").strip()
+                try:
+                    cur.execute("INSERT INTO player_aliases (roster_id,nr,sezon) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                                (player_id, nr, sezon))
+                except: pass
+
+        db.commit(); cur.close()
+        flash(f"✓ Zawodnik {imie} {nazwisko} zapisany","success")
+        return redirect(url_for("roster"))
+
+    # GET
+    player = None; aliases = []
+    if player_id:
+        cur.execute("SELECT * FROM roster WHERE id=%s", (player_id,))
+        player = cur.fetchone()
+        cur.execute("SELECT nr,sezon FROM player_aliases WHERE roster_id=%s ORDER BY nr", (player_id,))
+        aliases = cur.fetchall()
+    cur.close()
+
+    numery_str = ", ".join(
+        f"{a['nr']}" + (f" ({a['sezon']})" if a['sezon'] else "")
+        for a in aliases
+    )
+
+    title = "Edytuj zawodnika" if player_id else "Nowy zawodnik"
+    content = f"""
+<div class="page-title">{title}</div>
+<div class="row justify-content-center">
+<div class="col-lg-6">
+  <div class="card p-3">
+    <form method="POST">
+      <div class="row g-3">
+        <div class="col-6">
+          <label class="form-label fw-bold">Imię *</label>
+          <input type="text" name="imie" class="form-control" value="{''+player['imie'] if player else ''}" required>
+        </div>
+        <div class="col-6">
+          <label class="form-label fw-bold">Nazwisko</label>
+          <input type="text" name="nazwisko" class="form-control" value="{''+player['nazwisko'] if player else ''}">
+        </div>
+        <div class="col-6">
+          <label class="form-label fw-bold">Pseudonim / inicjały</label>
+          <input type="text" name="pseudonim" class="form-control" value="{''+player['pseudonim'] if player else ''}" placeholder="np. KOW, Kowal">
+        </div>
+        <div class="col-6">
+          <label class="form-label fw-bold">Status</label>
+          <select name="aktywny" class="form-select">
+            <option value="1" {'selected' if not player or player['aktywny'] else ''}>Aktywny</option>
+            <option value="0" {'selected' if player and not player['aktywny'] else ''}>Nieaktywny</option>
+          </select>
+        </div>
+        <div class="col-12">
+          <label class="form-label fw-bold">Numery koszulek</label>
+          <input type="text" name="numery" class="form-control" value="{numery_str}"
+                 placeholder="np. 5, 12 (2024/25), 7 (2025/26)">
+          <div class="form-text">Wpisz numery oddzielone przecinkiem. Opcjonalnie dodaj sezon w nawiasie.</div>
+        </div>
+      </div>
+      <div class="d-flex gap-2 mt-3">
+        <button type="submit" class="btn btn-primary">Zapisz</button>
+        <a href="/roster" class="btn btn-outline-secondary">Anuluj</a>
+      </div>
+    </form>
+  </div>
+</div></div>"""
+    return render_template_string(base(content, active="players"))
+
+
+@app.route("/roster/<int:player_id>/delete")
+def roster_delete(player_id):
+    db = get_db(); cur = db.cursor()
+    cur.execute("DELETE FROM roster WHERE id=%s", (player_id,))
+    db.commit(); cur.close()
+    flash("Zawodnik usunięty","success")
+    return redirect(url_for("roster"))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EDYTOR MECZU — przypisanie numerów do zawodników z rostera
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/mecz/<int:match_id>/edytuj", methods=["GET","POST"])
+def mecz_edytuj(match_id):
+    try: init_db()
+    except: pass
+    db = get_db(); cur = db.cursor()
+    cur.execute("SELECT * FROM matches WHERE id=%s", (match_id,))
+    m = cur.fetchone()
+    if not m: return redirect(url_for("historia"))
+
+    gtk_name = (m.get("nazwa_gtk","") or "").strip() or get_setting("gtk_name") or "GTK"
+
+    # Pobierz zawodników GTK z tego meczu
+    cur.execute("SELECT id,nr,pts,p2m,p2a,p3m,p3a,ftm,fta,ast,oreb,dreb,br,fd,finishes,roster_id FROM player_stats WHERE match_id=%s AND druzyna='gtk' ORDER BY nr", (match_id,))
+    players = list(cur.fetchall())
+
+    # Pobierz roster
+    cur.execute("SELECT r.id, r.imie, r.nazwisko, r.pseudonim, COALESCE(string_agg(pa.nr::text,','),'') as numery FROM roster r LEFT JOIN player_aliases pa ON pa.roster_id=r.id WHERE r.aktywny=TRUE GROUP BY r.id,r.imie,r.nazwisko,r.pseudonim ORDER BY r.nazwisko,r.imie")
+    roster_list = list(cur.fetchall())
+
+    if request.method == "POST":
+        for p in players:
+            rid_key = f"roster_{p['id']}"
+            rid = request.form.get(rid_key,"")
+            rid_val = int(rid) if rid and rid.isdigit() else None
+            cur.execute("UPDATE player_stats SET roster_id=%s WHERE id=%s", (rid_val, p['id']))
+
+            # Jeśli wybrano zawodnika — dodaj alias numeru jeśli nie istnieje
+            sezon = m.get("sezon","")
+            if rid_val and p['nr']:
+                try:
+                    cur.execute("INSERT INTO player_aliases (roster_id,nr,sezon) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                                (rid_val, p['nr'], sezon))
+                except: pass
+
+        db.commit(); cur.close()
+        flash("✓ Przypisania zawodników zapisane","success")
+        return redirect(url_for("mecz", match_id=match_id))
+
+    cur.close()
+
+    # Buduj opcje rostera
+    roster_opts = "<option value=''>— nie przypisany —</option>" + "".join(
+        f'<option value="{r["id"]}">{r["imie"]} {r["nazwisko"]}'
+        + (f' ({r["pseudonim"]})' if r['pseudonim'] else '')
+        + (f' [#{r["numery"]}]' if r['numery'] else '') + '</option>'
+        for r in roster_list
+    )
+
+    rows = ""
+    for p in players:
+        pts = p['pts']
+        fga = p.get('p2a',0)+p.get('p3a',0)
+        efg = f"{(p.get('p2m',0)+1.5*p.get('p3m',0))/fga:.0%}" if fga else "—"
+        # Aktualne przypisanie
+        cur_rid = p.get('roster_id') or ""
+        opts = roster_opts.replace(f"value='{cur_rid}'", f"value='{cur_rid}' selected") if cur_rid else roster_opts
+
+        rows += f"""<tr>
+            <td class="fw-bold" style="width:60px">#{p['nr']}</td>
+            <td class="fw-bold" style="color:#1a2b4a">{pts}</td>
+            <td style="font-size:.8rem">{p.get('p2m',0)}/{p.get('p2a',0)} | {p.get('p3m',0)}/{p.get('p3a',0)}</td>
+            <td style="font-size:.8rem">{efg}</td>
+            <td>
+              <select name="roster_{p['id']}" class="form-select form-select-sm" style="min-width:200px">
+                {opts}
+              </select>
+            </td>
+        </tr>"""
+
+    dt = m['data_meczu'].strftime('%d.%m.%Y') if m['data_meczu'] else ""
+    content = f"""
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <div class="page-title mb-0">✏️ Przypisz zawodników — {gtk_name}</div>
+    <div style="font-size:.8rem;color:#888">{m['przeciwnik']} · {dt}</div>
+  </div>
+  <a href="/mecz/{match_id}" class="btn btn-outline-secondary btn-sm">← Wróć do raportu</a>
+</div>
+
+<div class="card p-3 mb-3" style="background:#fff8e1;border:1px solid #ffe082">
+  <div style="font-size:.83rem">
+    <b>Jak to działa:</b> Przypisz numer koszulki do zawodnika z rostera.
+    System zapamięta ten numer jako alias — w przyszłości automatycznie rozpozna tego zawodnika.
+    Możesz też <a href="/roster/nowy">dodać nowego zawodnika</a> jeśli go nie ma na liście.
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-3">
+    <form method="POST">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr>
+            <th>#</th><th>PTS</th><th>2PT | 3PT</th><th>eFG%</th>
+            <th>Zawodnik z rostera</th>
+          </tr></thead>
+          <tbody>{rows if rows else '<tr><td colspan="5" class="text-center text-muted py-3">Brak danych zawodników</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div class="d-flex gap-2 mt-3">
+        <button type="submit" class="btn btn-primary fw-bold">✓ Zapisz przypisania</button>
+        <a href="/mecz/{match_id}" class="btn btn-outline-secondary">Anuluj</a>
+        <a href="/roster" class="btn btn-outline-primary ms-auto">👥 Zarządzaj rosterem</a>
+      </div>
+    </form>
+  </div>
+</div>"""
+    return render_template_string(base(content, active="history"))
 
 
 if __name__ == "__main__":
