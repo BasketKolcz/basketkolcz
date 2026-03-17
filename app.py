@@ -2594,7 +2594,7 @@ def zawodnicy():
 
     content = f"""
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <div class="page-title mb-0">👤 Zawodnicy sezonu — {gtk_name}</div>
+  <div class="page-title mb-0">📈 Statystyki indywidualne</div>
   <form method="GET" class="d-flex gap-2 align-items-center">
     <select name="sezon" class="form-select form-select-sm" style="width:120px" onchange="this.form.submit()">
       {season_opts}
