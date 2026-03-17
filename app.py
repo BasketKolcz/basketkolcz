@@ -1939,7 +1939,7 @@ def mecz(match_id):
   <ul class="nav nav-tabs mt-2 mb-1" id="gtkTabs">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#gtk_q">Per kwarta</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_p">Zawodnicy</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_t">Shot Timing</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_t">Timing rzutów</button></li>
   </ul>
   <div class="tab-content">
     <div class="tab-pane fade show active" id="gtk_q"><div class="card mt-1"><div class="card-body p-2">{q_table('gtk')}</div></div></div>
@@ -1953,7 +1953,7 @@ def mecz(match_id):
   <ul class="nav nav-tabs mt-2 mb-1" id="oppTabs">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#opp_q">Per kwarta</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#opp_p">Zawodnicy</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#opp_t">Shot Timing</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#opp_t">Timing rzutów</button></li>
   </ul>
   <div class="tab-content">
     <div class="tab-pane fade show active" id="opp_q"><div class="card mt-1"><div class="card-body p-2">{q_table('opp')}</div></div></div>
@@ -1965,7 +1965,7 @@ def mecz(match_id):
 <div class="tab-pane fade" id="tabCMP">
   <ul class="nav nav-tabs mt-2 mb-1" id="cmpTabs">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#cmp_metrics">Kluczowe Metryki</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#cmp_timing">Shot Timing</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#cmp_timing">Timing rzutów</button></li>
   </ul>
   <div class="tab-content">
 
@@ -2055,7 +2055,7 @@ def mecz(match_id):
             <tr>
               <th rowspan="2" style="background:#f8f9fa;color:#1a2b4a;border-bottom:2px solid #dee2e6;vertical-align:middle">Czas</th>
               <th colspan="3" style="background:#e8f5e9;color:#1a6b3c;text-align:center;border-bottom:2px solid #1a6b3c">{gtk_name}</th>
-              <th colspan="2" style="background:#f8f9fa;color:#555;text-align:center;border-bottom:2px solid #dee2e6">Pasek</th>
+              <th colspan="2" style="background:#f8f9fa;color:#555;text-align:center;border-bottom:2px solid #dee2e6"></th>
               <th colspan="3" style="background:#ffebee;color:#8b1a1a;text-align:center;border-bottom:2px solid #8b1a1a">{name_opp}</th>
             </tr>
             <tr>
@@ -2389,10 +2389,32 @@ def sezon():
     def timing_row(bucket):
         gd = next((r for r in timing_rows if r["druzyna"]=="gtk" and r["bucket"]==bucket), {})
         od = next((r for r in timing_rows if r["druzyna"]=="opp" and r["bucket"]==bucket), {})
-        gm=gd.get("made2",0)+gd.get("made3",0); ga=gd.get("att2",0)+gd.get("att3",0)
-        om=od.get("made2",0)+od.get("made3",0); oa=od.get("att2",0)+od.get("att3",0)
-        ge=f"{gm/ga:.0%}" if ga else "-"; oe=f"{om/oa:.0%}" if oa else "-"
-        return f"<tr><td><b>{bucket}</b></td><td>{gm}/{ga}</td><td style='color:#1a6b3c;font-weight:600'>{ge}</td><td>{om}/{oa}</td><td style='color:#8b1a1a;font-weight:600'>{oe}</td></tr>"
+        gm2=int(gd.get("made2",0) or 0); ga2=int(gd.get("att2",0) or 0)
+        gm3=int(gd.get("made3",0) or 0); ga3=int(gd.get("att3",0) or 0)
+        om2=int(od.get("made2",0) or 0); oa2=int(od.get("att2",0) or 0)
+        om3=int(od.get("made3",0) or 0); oa3=int(od.get("att3",0) or 0)
+        gm=gm2+gm3; ga=ga2+ga3
+        om=om2+om3; oa=oa2+oa3
+        ge=f"{gm/ga:.0%}" if ga else "—"
+        oe=f"{om/oa:.0%}" if oa else "—"
+        # Paski
+        max_att = max(
+            max((int(r.get("att2",0) or 0)+int(r.get("att3",0) or 0)) for r in timing_rows if r["druzyna"]=="gtk") if timing_rows else 1,
+            1
+        )
+        gbar = int(ga/max_att*80) if ga else 0
+        obar = int(oa/max_att*80) if oa else 0
+        return f"""<tr>
+            <td class="fw-bold" style="font-size:.85rem">{bucket}</td>
+            <td style="font-size:.8rem;background:#f0fff4">{gm}/{ga}</td>
+            <td style="font-weight:700;color:#1a6b3c;background:#f0fff4">{ge}</td>
+            <td style="font-size:.75rem;color:#555;background:#f0fff4">{gm2}/{ga2} | {gm3}/{ga3}</td>
+            <td style="padding:6px 8px"><div style="height:8px;width:{gbar}px;background:#1a6b3c;border-radius:4px"></div></td>
+            <td style="padding:6px 8px"><div style="height:8px;width:{obar}px;background:#8b1a1a;border-radius:4px"></div></td>
+            <td style="font-size:.75rem;color:#555;background:#fff5f5">{om2}/{oa2} | {om3}/{oa3}</td>
+            <td style="font-weight:700;color:#8b1a1a;background:#fff5f5">{oe}</td>
+            <td style="font-size:.8rem;background:#fff5f5">{om}/{oa}</td>
+        </tr>"""
 
     tim_rows = "".join(timing_row(b) for b in BUCKETS)
 
@@ -2420,7 +2442,7 @@ def sezon():
 
 <ul class="nav nav-tabs mb-2">
   <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#sMetrics">Metryki średnie</button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sTiming">Shot Timing</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sTiming">Timing rzutów</button></li>
 </ul>
 
 <div class="tab-content">
@@ -2452,17 +2474,34 @@ def sezon():
 
 <div class="tab-pane fade" id="sTiming">
   <div class="card mt-1"><div class="card-body p-2">
-    <div class="section-hdr">Shot Timing sezonu (łącznie)</div>
+    <div class="section-hdr">Timing rzutów — skuteczność według czasu posiadania (zegar 24s)</div>
+    <div class="d-flex gap-3 mb-2" style="font-size:.78rem">
+      <span><span style="display:inline-block;width:12px;height:8px;background:#1a6b3c;border-radius:2px;margin-right:4px"></span>{gtk_name}</span>
+      <span><span style="display:inline-block;width:12px;height:8px;background:#8b1a1a;border-radius:2px;margin-right:4px"></span>Przeciwnicy</span>
+    </div>
+    <div class="table-responsive">
     <table class="table table-hover mb-0">
-      <thead><tr>
-        <th>Czas</th>
-        <th class="text-center" style="color:#1a6b3c">{gtk_name} Made/Att</th>
-        <th class="text-center" style="color:#1a6b3c">Eff%</th>
-        <th class="text-center" style="color:#8b1a1a">Opp Made/Att</th>
-        <th class="text-center" style="color:#8b1a1a">Eff%</th>
-      </tr></thead>
+      <thead>
+        <tr>
+          <th rowspan="2" style="vertical-align:middle">Czas</th>
+          <th colspan="3" style="background:#e8f5e9;color:#1a6b3c;text-align:center;border-bottom:2px solid #1a6b3c">{gtk_name}</th>
+          <th colspan="2" style="text-align:center;border-bottom:2px solid #dee2e6"></th>
+          <th colspan="3" style="background:#ffebee;color:#8b1a1a;text-align:center;border-bottom:2px solid #8b1a1a">Przeciwnicy</th>
+        </tr>
+        <tr>
+          <th style="background:#e8f5e9;color:#1a6b3c;text-align:center;font-size:.72rem">Celne/Próby</th>
+          <th style="background:#e8f5e9;color:#1a6b3c;text-align:center;font-size:.72rem">Eff%</th>
+          <th style="background:#e8f5e9;color:#1a6b3c;text-align:center;font-size:.72rem">2PT | 3PT</th>
+          <th style="text-align:center;font-size:.72rem;width:90px">{gtk_name}</th>
+          <th style="text-align:center;font-size:.72rem;width:90px">Opp</th>
+          <th style="background:#ffebee;color:#8b1a1a;text-align:center;font-size:.72rem">2PT | 3PT</th>
+          <th style="background:#ffebee;color:#8b1a1a;text-align:center;font-size:.72rem">Eff%</th>
+          <th style="background:#ffebee;color:#8b1a1a;text-align:center;font-size:.72rem">Celne/Próby</th>
+        </tr>
+      </thead>
       <tbody>{tim_rows}</tbody>
     </table>
+    </div>
   </div></div>
 </div>
 
@@ -3866,7 +3905,7 @@ def export_match_pdf(match_id):
 </div>
 
 <div class="section">
-  <h3>Shot Timing</h3>
+  <h3>Timing rzutów</h3>
   <table style="width:40%">
     <thead><tr>
       <th {THL}>Czas</th>
