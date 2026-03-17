@@ -2558,13 +2558,16 @@ def zawodnicy():
 
     rows = ""
     for i, p in enumerate(players):
-        fga = p.get("p2a",0)+p.get("p3a",0)
-        fta = p.get("fta",0); ftm = p.get("ftm",0)
-        pm2=p.get("p2m",0); pm3=p.get("p3m",0)
-        efg=f"{(pm2+1.5*pm3)/fga:.1%}" if fga else "-"
-        ts =f"{p.get('pts',0)/(2*(fga+0.44*fta)):.1%}" if (fga+fta) else "-"
-        n = p.get("mecze",1)
-        ppg = f"{p.get('pts',0)/n:.1f}"
+        fga = int(p.get("p2a",0) or 0) + int(p.get("p3a",0) or 0)
+        fta = int(p.get("fta",0) or 0)
+        ftm = int(p.get("ftm",0) or 0)
+        pm2 = int(p.get("p2m",0) or 0)
+        pm3 = int(p.get("p3m",0) or 0)
+        pts = int(p.get("pts",0) or 0)
+        efg = f"{(pm2+1.5*pm3)/fga:.1%}" if fga else "-"
+        ts  = f"{pts/(2*(fga+0.44*fta)):.1%}" if (fga+fta) else "-"
+        n   = int(p.get("mecze",1) or 1)
+        ppg = f"{pts/n:.1f}"
         nie = p.get('ma_nieprzypisane')
         nazwa = p.get('nazwa','?')
         bg = "background:#fff8e1" if nie else ("background:#f8f9ff" if i%2==0 else "")
@@ -2572,17 +2575,17 @@ def zawodnicy():
         rows += f"""<tr style="{bg}">
             <td class="fw-bold">{nazwa}{warn}</td>
             <td>{ppg}</td>
-            <td>{pm2}/{p.get('p2a',0)}</td>
-            <td>{pm3}/{p.get('p3a',0)}</td>
+            <td>{pm2}/{int(p.get('p2a',0) or 0)}</td>
+            <td>{pm3}/{int(p.get('p3a',0) or 0)}</td>
             <td>{ftm}/{fta}</td>
             <td><b>{efg}</b></td>
             <td>{ts}</td>
-            <td>{p.get('ast',0)}</td>
-            <td>{p.get('oreb',0)}</td>
-            <td>{p.get('dreb',0)}</td>
-            <td>{p.get('br',0)}</td>
-            <td>{p.get('finishes',0)}</td>
-            <td class="fw-bold" style="color:#1a2b4a">{p.get('pts',0)}</td>
+            <td>{int(p.get('ast',0) or 0)}</td>
+            <td>{int(p.get('oreb',0) or 0)}</td>
+            <td>{int(p.get('dreb',0) or 0)}</td>
+            <td>{int(p.get('br',0) or 0)}</td>
+            <td>{int(p.get('finishes',0) or 0)}</td>
+            <td class="fw-bold" style="color:#1a2b4a">{pts}</td>
             <td style="font-size:.78rem;color:#888">{n}</td>
         </tr>"""
 
