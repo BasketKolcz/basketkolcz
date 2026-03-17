@@ -3940,9 +3940,16 @@ def roster():
         </tr>"""
 
     content = f"""
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <div class="page-title mb-0">👥 Roster — zawodnicy</div>
-  <a href="/roster/nowy" class="btn btn-primary btn-sm">+ Dodaj zawodnika</a>
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div class="page-title mb-0">👥 Skład drużyny</div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="/roster/szablon" class="btn btn-outline-secondary btn-sm">📥 Pobierz szablon Excel</a>
+    <button class="btn btn-outline-success btn-sm" onclick="document.getElementById('importFile').click()">📤 Importuj z Excel</button>
+    <form method="POST" action="/roster/import" enctype="multipart/form-data" style="display:none">
+      <input type="file" id="importFile" name="file" accept=".xlsx" onchange="this.form.submit()">
+    </form>
+    <a href="/roster/nowy" class="btn btn-primary btn-sm">+ Dodaj zawodnika</a>
+  </div>
 </div>
 <div class="card">
   <div class="card-body p-2">
@@ -3952,13 +3959,181 @@ def roster():
           <th>Imię i nazwisko</th><th>Pseudonim</th><th>Numery koszulek</th><th>Status</th><th class="text-center">Akcje</th>
         </tr></thead>
         <tbody>
-          {rows if rows else '<tr><td colspan="5" class="text-center text-muted py-4">Brak zawodników — dodaj pierwszego</td></tr>'}
+          {rows if rows else '<tr><td colspan="5" class="text-center text-muted py-4">Brak zawodników — dodaj pierwszego lub zaimportuj z Excel</td></tr>'}
         </tbody>
       </table>
     </div>
   </div>
 </div>"""
-    return render_template_string(base(content, active="players"))
+    return render_template_string(base(content, active="roster"))
+
+
+@app.route("/roster/szablon")
+def roster_szablon():
+    """Pobierz szablon Excel do importu zawodników"""
+    wb = openpyxl.Workbook()
+    ws = wb.active; ws.title = "ZAWODNICY"
+
+    HDR  = PatternFill("solid", fgColor="1A2B4A")
+    HDR_F= Font(color="FFFFFF", bold=True, size=10)
+    YEL  = PatternFill("solid", fgColor="FFF9C4")
+    CTR  = Alignment(horizontal="center", vertical="center")
+    BORDER = Border(
+        bottom=Side(style="thin", color="CCCCCC"),
+        right=Side(style="thin", color="CCCCCC"),
+        left=Side(style="thin", color="CCCCCC"),
+        top=Side(style="thin", color="CCCCCC"),
+    )
+
+    # Nagłówek
+    ws.merge_cells("A1:F1")
+    t = ws["A1"]; t.value = "SZABLON IMPORTU ZAWODNIKÓW — Basket Kołcz Analytics"
+    t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=12)
+    t.alignment = CTR
+    ws.row_dimensions[1].height = 24
+
+    # Kolumny
+    cols = [
+        ("A", "Imię *",          14),
+        ("B", "Nazwisko",        16),
+        ("C", "Pseudonim",       14),
+        ("D", "Numery koszulek", 22),
+        ("E", "Sezon",           12),
+        ("F", "Status",          12),
+    ]
+    for col, label, width in cols:
+        ws.column_dimensions[col].width = width
+        c = ws[f"{col}2"]
+        c.value = label; c.fill = HDR; c.font = HDR_F
+        c.alignment = CTR; c.border = BORDER
+    ws.row_dimensions[2].height = 22
+
+    # Przykładowe dane
+    examples = [
+        ("Jan",    "Kowalski",  "KOW",  "5, 12",  "2025/26", "aktywny"),
+        ("Piotr",  "Nowak",     "NOW",  "7",       "2025/26", "aktywny"),
+        ("Marek",  "Wiśniewski","WIS",  "4, 4",    "2025/26", "aktywny"),
+        ("Tomasz", "Kowalczyk", "",     "11",      "2025/26", "aktywny"),
+        ("",       "",          "",     "",        "",        ""),
+    ]
+    for i, (imie,nazwisko,pseudo,numery,sezon,status) in enumerate(examples):
+        r = 3+i
+        for j, v in enumerate([imie,nazwisko,pseudo,numery,sezon,status]):
+            c = ws.cell(r, j+1, v)
+            c.fill = YEL if v else PatternFill("solid", fgColor="FAFAFA")
+            c.alignment = CTR; c.border = BORDER
+
+    # Walidacja kolumny F (Status)
+    from openpyxl.worksheet.datavalidation import DataValidation
+    dv = DataValidation(type="list", formula1='"aktywny,nieaktywny"', allow_blank=True)
+    ws.add_data_validation(dv); dv.add("F3:F200")
+
+    # Legenda
+    ws["A10"] = "INSTRUKCJA:"
+    ws["A10"].font = Font(bold=True, color="1A2B4A")
+    notes = [
+        ("A11", "* Imię jest wymagane"),
+        ("A12", "* Numery: wpisz oddzielone przecinkiem, np. 5, 12"),
+        ("A13", "* Sezon: dotyczy wszystkich numerów w tym wierszu, np. 2025/26"),
+        ("A14", "* Jeśli zawodnik nosił różne numery w różnych sezonach — dodaj osobny wiersz"),
+        ("A15", "* Status: aktywny / nieaktywny"),
+    ]
+    for cell, text in notes:
+        ws[cell] = text
+        ws[cell].font = Font(italic=True, color="666666", size=9)
+
+    ws.freeze_panes = "A3"
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True,
+                     download_name="SZABLON_ZAWODNICY.xlsx",
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route("/roster/import", methods=["POST"])
+def roster_import():
+    """Importuj zawodników z pliku Excel"""
+    if "file" not in request.files:
+        flash("Nie wybrano pliku","error"); return redirect(url_for("roster"))
+    f = request.files["file"]
+    if not f.filename.endswith(".xlsx"):
+        flash("Plik musi być w formacie .xlsx","error"); return redirect(url_for("roster"))
+
+    try:
+        init_db()
+        wb = openpyxl.load_workbook(io.BytesIO(f.read()), data_only=True)
+        # Znajdź arkusz z danymi
+        ws = None
+        for sn in wb.sheetnames:
+            if "zawodnicy" in sn.lower() or "roster" in sn.lower() or sn == wb.sheetnames[0]:
+                ws = wb[sn]; break
+        if not ws:
+            flash("Nie znaleziono arkusza z danymi","error"); return redirect(url_for("roster"))
+
+        db = get_db(); cur = db.cursor()
+        dodani = 0; zaktualizowani = 0; bledy = []
+
+        for i, row in enumerate(ws.iter_rows(min_row=3, max_row=500, values_only=True), 3):
+            # Pomiń puste wiersze i przykłady
+            if not row[0] and not row[1]: continue
+            imie = str(row[0] or "").strip()
+            if not imie: continue
+            if imie.lower() in ("jan","piotr","marek","tomasz","imię"): continue  # pomiń przykłady
+
+            nazwisko  = str(row[1] or "").strip()
+            pseudonim = str(row[2] or "").strip()
+            numery_raw= str(row[3] or "").strip()
+            sezon_raw = str(row[4] or "").strip()
+            status    = str(row[5] or "aktywny").strip().lower()
+            aktywny   = status != "nieaktywny"
+
+            try:
+                # Sprawdź czy istnieje (po imieniu + nazwisku)
+                cur.execute("SELECT id FROM roster WHERE imie=%s AND nazwisko=%s", (imie, nazwisko))
+                existing = cur.fetchone()
+
+                if existing:
+                    cur.execute("UPDATE roster SET pseudonim=%s, aktywny=%s WHERE id=%s",
+                                (pseudonim, aktywny, existing["id"]))
+                    roster_id = existing["id"]
+                    zaktualizowani += 1
+                else:
+                    cur.execute("INSERT INTO roster (imie,nazwisko,pseudonim,aktywny) VALUES (%s,%s,%s,%s) RETURNING id",
+                                (imie, nazwisko, pseudonim, aktywny))
+                    roster_id = cur.fetchone()["id"]
+                    dodani += 1
+
+                # Dodaj numery koszulek
+                if numery_raw:
+                    import re as _re
+                    for nr_part in numery_raw.split(","):
+                        nr_part = nr_part.strip()
+                        if not nr_part: continue
+                        try:
+                            nr = int(_re.sub(r'[^\d]','', nr_part))
+                            sezon = sezon_raw
+                            cur.execute("""INSERT INTO player_aliases (roster_id,nr,sezon)
+                                          VALUES (%s,%s,%s) ON CONFLICT DO NOTHING""",
+                                        (roster_id, nr, sezon))
+                        except: pass
+
+            except Exception as e:
+                bledy.append(f"Wiersz {i}: {str(e)[:60]}")
+                try: get_db().rollback()
+                except: pass
+
+        db.commit(); cur.close()
+
+        msg = f"✓ Import zakończony: {dodani} nowych, {zaktualizowani} zaktualizowanych"
+        if bledy: msg += f" | Błędy: {', '.join(bledy[:3])}"
+        flash(msg, "success" if not bledy else "error")
+
+    except Exception as e:
+        try: get_db().rollback()
+        except: pass
+        flash(f"Błąd importu: {str(e)}", "error")
+
+    return redirect(url_for("roster"))
 
 
 @app.route("/roster/nowy", methods=["GET","POST"])
