@@ -852,35 +852,114 @@ def mecz(match_id):
 </div>
 
 <div class="tab-pane fade" id="tabCMP">
-  <div class="row g-3 mt-1">
-    <div class="col-lg-5">
-      <div class="card"><div class="card-body p-2">
-        <div class="section-hdr">Kluczowe metryki</div>
-        <table class="table table-sm table-hover mb-0">
-          <thead><tr><th>Metryka</th><th class="text-center gtk-color">{gtk_name}</th><th class="text-center opp-color">{name_opp}</th></tr></thead>
+  <ul class="nav nav-tabs mt-2 mb-1" id="cmpTabs">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#cmp_metrics">Kluczowe Metryki</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#cmp_timing">Shot Timing</button></li>
+  </ul>
+  <div class="tab-content">
+
+  <div class="tab-pane fade show active" id="cmp_metrics">
+    <div class="row g-3 mt-1">
+      <div class="col-lg-5">
+        <div class="card"><div class="card-body p-2">
+          <table class="table table-sm table-hover mb-0">
+            <thead><tr>
+              <th>Metryka</th>
+              <th class="text-center gtk-color">{gtk_name}</th>
+              <th class="text-center opp-color">{name_opp}</th>
+            </tr></thead>
+            <tbody>
+              {''.join(f'''<tr>
+                <td style="font-size:.82rem"><b>{l}</b><br><span style="font-size:.7rem;color:#aaa">{desc}</span>
+                  <div style="display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:3px">
+                    <div style="flex:{fa};background:{'#1a6b3c' if fa>=fb else '#ddd'}"></div>
+                    <div style="flex:{fb};background:{'#8b1a1a' if fb>fa else '#ddd'}"></div>
+                  </div>
+                </td>
+                <td class="text-center" style="{'font-weight:700;color:#1a6b3c' if fa>fb else ''}">{va}</td>
+                <td class="text-center" style="{'font-weight:700;color:#8b1a1a' if fb>fa else ''}">{vb}</td>
+              </tr>''' for l,va,vb,desc,fa,fb in [
+                ("Punkty",suma_gtk.get('pts',0),suma_opp.get('pts',0),"Łączna liczba punktów",suma_gtk.get('pts',0),suma_opp.get('pts',0)),
+                ("Posiadania",suma_gtk.get('poss',0),suma_opp.get('poss',0),"Liczba posiadań",suma_gtk.get('poss',0),suma_opp.get('poss',0)),
+                ("eFG%",kpi_gtk['efg'],kpi_opp['efg'],"Efektywny % rzutów z pola",
+                 float(kpi_gtk['efg'].replace('%','')) if kpi_gtk['efg']!='-' else 0,
+                 float(kpi_opp['efg'].replace('%','')) if kpi_opp['efg']!='-' else 0),
+                ("TS%",kpi_gtk['ts'],kpi_opp['ts'],"Prawdziwy % skuteczności",
+                 float(kpi_gtk['ts'].replace('%','')) if kpi_gtk['ts']!='-' else 0,
+                 float(kpi_opp['ts'].replace('%','')) if kpi_opp['ts']!='-' else 0),
+                ("ORtg",kpi_gtk['ortg'],kpi_opp['ortg'],"Punkty na 100 posiadań",
+                 float(kpi_gtk['ortg']) if kpi_gtk['ortg']!='-' else 0,
+                 float(kpi_opp['ortg']) if kpi_opp['ortg']!='-' else 0),
+                ("PPP",kpi_gtk['ppp'],kpi_opp['ppp'],"Punkty na posiadanie",
+                 float(kpi_gtk['ppp']) if kpi_gtk['ppp']!='-' else 0,
+                 float(kpi_opp['ppp']) if kpi_opp['ppp']!='-' else 0),
+                ("2PT%",kpi_gtk['p2_pct'],kpi_opp['p2_pct'],"Skuteczność za 2 pkt",
+                 float(kpi_gtk['p2_pct'].replace('%','')) if kpi_gtk['p2_pct']!='-' else 0,
+                 float(kpi_opp['p2_pct'].replace('%','')) if kpi_opp['p2_pct']!='-' else 0),
+                ("3PT%",kpi_gtk['p3_pct'],kpi_opp['p3_pct'],"Skuteczność za 3 pkt",
+                 float(kpi_gtk['p3_pct'].replace('%','')) if kpi_gtk['p3_pct']!='-' else 0,
+                 float(kpi_opp['p3_pct'].replace('%','')) if kpi_opp['p3_pct']!='-' else 0),
+                ("FT%",kpi_gtk['ft_pct'],kpi_opp['ft_pct'],"Skuteczność rzutów wolnych",
+                 float(kpi_gtk['ft_pct'].replace('%','')) if kpi_gtk['ft_pct']!='-' else 0,
+                 float(kpi_opp['ft_pct'].replace('%','')) if kpi_opp['ft_pct']!='-' else 0),
+                ("FT Rate",kpi_gtk['ftr'],kpi_opp['ftr'],"FTA / FGA",
+                 float(kpi_gtk['ftr']) if kpi_gtk['ftr']!='-' else 0,
+                 float(kpi_opp['ftr']) if kpi_opp['ftr']!='-' else 0),
+                ("Straty (BR)",suma_gtk.get('br',0),suma_opp.get('br',0),"Liczba strat — niższy = lepszy",
+                 suma_opp.get('br',0),suma_gtk.get('br',0)),
+                ("Faule wymuszone",suma_gtk.get('fd',0),suma_opp.get('fd',0),"Liczba wymuszonych fauli",
+                 suma_gtk.get('fd',0),suma_opp.get('fd',0)),
+                ("2PM/A",f"{suma_gtk.get('p2m',0)}/{suma_gtk.get('p2a',0)}",f"{suma_opp.get('p2m',0)}/{suma_opp.get('p2a',0)}","Celne / próby za 2 pkt",suma_gtk.get('p2m',0),suma_opp.get('p2m',0)),
+                ("3PM/A",f"{suma_gtk.get('p3m',0)}/{suma_gtk.get('p3a',0)}",f"{suma_opp.get('p3m',0)}/{suma_opp.get('p3a',0)}","Celne / próby za 3 pkt",suma_gtk.get('p3m',0),suma_opp.get('p3m',0)),
+                ("FTM/A",f"{suma_gtk.get('ftm',0)}/{suma_gtk.get('fta',0)}",f"{suma_opp.get('ftm',0)}/{suma_opp.get('fta',0)}","Celne / próby rzutów wolnych",suma_gtk.get('ftm',0),suma_opp.get('ftm',0)),
+              ])}
+            </tbody>
+          </table>
+        </div></div>
+      </div>
+      <div class="col-lg-7">
+        <div class="card"><div class="card-body p-3">
+          <div class="section-hdr">Punkty per kwarta</div>
+          <canvas id="qChart"></canvas>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="cmp_timing">
+    <div class="card mt-2"><div class="card-body p-2">
+      <p class="text-muted mb-2" style="font-size:.8rem">Porównanie skuteczności rzutów według czasu trwania posiadania (zegar 24s)</p>
+      <div class="d-flex gap-3 mb-2" style="font-size:.78rem">
+        <span><span style="display:inline-block;width:12px;height:8px;background:#1a6b3c;border-radius:2px;margin-right:4px"></span>{gtk_name}</span>
+        <span><span style="display:inline-block;width:12px;height:8px;background:#8b1a1a;border-radius:2px;margin-right:4px"></span>{name_opp}</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr>
+            <th>Czas</th>
+            <th class="text-center" style="color:#1a6b3c">Celne/Próby</th>
+            <th class="text-center" style="color:#1a6b3c">Eff%</th>
+            <th style="width:100px">{gtk_name}</th>
+            <th style="width:100px">{name_opp}</th>
+            <th class="text-center" style="color:#8b1a1a">Eff%</th>
+            <th class="text-center" style="color:#8b1a1a">Celne/Próby</th>
+          </tr></thead>
           <tbody>
-            {''.join(f"<tr><td><b>{l}</b></td><td class='text-center'>{va}</td><td class='text-center'>{vb}</td></tr>" for l,va,vb in [
-              ("Punkty",suma_gtk.get('pts',0),suma_opp.get('pts',0)),
-              ("Posiadania",suma_gtk.get('poss',0),suma_opp.get('poss',0)),
-              ("eFG%",kpi_gtk['efg'],kpi_opp['efg']),
-              ("TS%",kpi_gtk['ts'],kpi_opp['ts']),
-              ("ORtg",kpi_gtk['ortg'],kpi_opp['ortg']),
-              ("PPP",kpi_gtk['ppp'],kpi_opp['ppp']),
-              ("2PT%",kpi_gtk['p2_pct'],kpi_opp['p2_pct']),
-              ("3PT%",kpi_gtk['p3_pct'],kpi_opp['p3_pct']),
-              ("FT%",kpi_gtk['ft_pct'],kpi_opp['ft_pct']),
-              ("Straty",suma_gtk.get('br',0),suma_opp.get('br',0)),
-            ])}
+            {''.join(f"""<tr>
+              <td class="fw-bold" style="font-size:.82rem">{b}</td>
+              <td class="text-center" style="font-size:.82rem">{(lambda gd: f"{gd.get('made2',0)+gd.get('made3',0)}/{gd.get('att2',0)+gd.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
+              <td class="text-center" style="font-size:.82rem;font-weight:600;color:#1a6b3c">{(lambda gd: f"{(gd.get('made2',0)+gd.get('made3',0))/(gd.get('att2',0)+gd.get('att3',0)):.0%}" if (gd.get('att2',0)+gd.get('att3',0)) else "-")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
+              <td><div style="height:8px;width:{int((next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}).get('att3',0))/max(max((next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==bb),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==bb),{}).get('att3',0)) for bb in BUCKETS),1)*80)}px;background:#1a6b3c;border-radius:4px"></div></td>
+              <td><div style="height:8px;width:{int((next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}).get('att3',0))/max(max((next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==bb),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==bb),{}).get('att3',0)) for bb in BUCKETS),1)*80)}px;background:#8b1a1a;border-radius:4px"></div></td>
+              <td class="text-center" style="font-size:.82rem;font-weight:600;color:#8b1a1a">{(lambda od: f"{(od.get('made2',0)+od.get('made3',0))/(od.get('att2',0)+od.get('att3',0)):.0%}" if (od.get('att2',0)+od.get('att3',0)) else "-")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
+              <td class="text-center" style="font-size:.82rem">{(lambda od: f"{od.get('made2',0)+od.get('made3',0)}/{od.get('att2',0)+od.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
+            </tr>""" for b in BUCKETS)}
           </tbody>
         </table>
-      </div></div>
-    </div>
-    <div class="col-lg-7">
-      <div class="card"><div class="card-body p-3">
-        <div class="section-hdr">Punkty per kwarta</div>
-        <canvas id="qChart"></canvas>
-      </div></div>
-    </div>
+      </div>
+    </div></div>
+  </div>
+
   </div>
 </div>
 
