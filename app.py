@@ -1163,65 +1163,70 @@ def mecz(match_id):
     <div class="row g-3 mt-1">
       <div class="col-lg-5">
         <div class="card"><div class="card-body p-2">
-          <table class="table table-sm table-hover mb-0">
+          <p style="font-size:.72rem;color:#aaa;margin-bottom:.5rem">Kliknij metrykę aby zobaczyć breakdown per kwarta →</p>
+          <table class="table table-sm mb-0" id="metricsTable">
             <thead><tr>
               <th>Metryka</th>
               <th class="text-center gtk-color">{gtk_name}</th>
               <th class="text-center opp-color">{name_opp}</th>
             </tr></thead>
             <tbody>
-              {''.join(f'''<tr>
-                <td style="font-size:.82rem"><b>{l}</b><br><span style="font-size:.7rem;color:#aaa">{desc}</span>
-                  <div style="display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:3px">
+              {''.join(f'''<tr class="metric-row" data-metric="{key}" style="cursor:pointer;transition:.15s" title="Kliknij aby zobaczyć per kwarta">
+                <td style="font-size:.82rem">
+                  <b>{l}</b><br>
+                  <span style="font-size:.7rem;color:#aaa">{desc}</span>
+                  <div style="display:flex;height:4px;border-radius:3px;overflow:hidden;margin-top:4px">
                     <div style="flex:{fa};background:{'#1a6b3c' if fa>=fb else '#ddd'}"></div>
                     <div style="flex:{fb};background:{'#8b1a1a' if fb>fa else '#ddd'}"></div>
                   </div>
                 </td>
-                <td class="text-center" style="{'font-weight:700;color:#1a6b3c' if fa>fb else ''}">{va}</td>
-                <td class="text-center" style="{'font-weight:700;color:#8b1a1a' if fb>fa else ''}">{vb}</td>
-              </tr>''' for l,va,vb,desc,fa,fb in [
-                ("Punkty",suma_gtk.get('pts',0),suma_opp.get('pts',0),"Łączna liczba punktów",suma_gtk.get('pts',0),suma_opp.get('pts',0)),
-                ("Posiadania",suma_gtk.get('poss',0),suma_opp.get('poss',0),"Liczba posiadań",suma_gtk.get('poss',0),suma_opp.get('poss',0)),
-                ("eFG%",kpi_gtk['efg'],kpi_opp['efg'],"Efektywny % rzutów z pola",
+                <td class="text-center fw-bold" style="{'color:#1a6b3c' if fa>fb else 'color:#555'}">{va}</td>
+                <td class="text-center fw-bold" style="{'color:#8b1a1a' if fb>fa else 'color:#555'}">{vb}</td>
+              </tr>''' for l,va,vb,desc,key,fa,fb in [
+                ("Punkty",suma_gtk.get('pts',0),suma_opp.get('pts',0),"Łączna liczba punktów","pts",suma_gtk.get('pts',0),suma_opp.get('pts',0)),
+                ("Posiadania",suma_gtk.get('poss',0),suma_opp.get('poss',0),"Liczba posiadań","poss",suma_gtk.get('poss',0),suma_opp.get('poss',0)),
+                ("eFG%",kpi_gtk['efg'],kpi_opp['efg'],"Efektywny % rzutów z pola","efg",
                  float(kpi_gtk['efg'].replace('%','')) if kpi_gtk['efg']!='-' else 0,
                  float(kpi_opp['efg'].replace('%','')) if kpi_opp['efg']!='-' else 0),
-                ("TS%",kpi_gtk['ts'],kpi_opp['ts'],"Prawdziwy % skuteczności",
+                ("TS%",kpi_gtk['ts'],kpi_opp['ts'],"Prawdziwy % skuteczności","ts",
                  float(kpi_gtk['ts'].replace('%','')) if kpi_gtk['ts']!='-' else 0,
                  float(kpi_opp['ts'].replace('%','')) if kpi_opp['ts']!='-' else 0),
-                ("ORtg",kpi_gtk['ortg'],kpi_opp['ortg'],"Punkty na 100 posiadań",
+                ("ORtg",kpi_gtk['ortg'],kpi_opp['ortg'],"Punkty na 100 posiadań","ortg",
                  float(kpi_gtk['ortg']) if kpi_gtk['ortg']!='-' else 0,
                  float(kpi_opp['ortg']) if kpi_opp['ortg']!='-' else 0),
-                ("PPP",kpi_gtk['ppp'],kpi_opp['ppp'],"Punkty na posiadanie",
+                ("PPP",kpi_gtk['ppp'],kpi_opp['ppp'],"Punkty na posiadanie","ppp",
                  float(kpi_gtk['ppp']) if kpi_gtk['ppp']!='-' else 0,
                  float(kpi_opp['ppp']) if kpi_opp['ppp']!='-' else 0),
-                ("2PT%",kpi_gtk['p2_pct'],kpi_opp['p2_pct'],"Skuteczność za 2 pkt",
+                ("2PT%",kpi_gtk['p2_pct'],kpi_opp['p2_pct'],"Skuteczność za 2 pkt","p2_pct",
                  float(kpi_gtk['p2_pct'].replace('%','')) if kpi_gtk['p2_pct']!='-' else 0,
                  float(kpi_opp['p2_pct'].replace('%','')) if kpi_opp['p2_pct']!='-' else 0),
-                ("3PT%",kpi_gtk['p3_pct'],kpi_opp['p3_pct'],"Skuteczność za 3 pkt",
+                ("3PT%",kpi_gtk['p3_pct'],kpi_opp['p3_pct'],"Skuteczność za 3 pkt","p3_pct",
                  float(kpi_gtk['p3_pct'].replace('%','')) if kpi_gtk['p3_pct']!='-' else 0,
                  float(kpi_opp['p3_pct'].replace('%','')) if kpi_opp['p3_pct']!='-' else 0),
-                ("FT%",kpi_gtk['ft_pct'],kpi_opp['ft_pct'],"Skuteczność rzutów wolnych",
+                ("FT%",kpi_gtk['ft_pct'],kpi_opp['ft_pct'],"Skuteczność rzutów wolnych","ft_pct",
                  float(kpi_gtk['ft_pct'].replace('%','')) if kpi_gtk['ft_pct']!='-' else 0,
                  float(kpi_opp['ft_pct'].replace('%','')) if kpi_opp['ft_pct']!='-' else 0),
-                ("FT Rate",kpi_gtk['ftr'],kpi_opp['ftr'],"FTA / FGA",
-                 float(kpi_gtk['ftr']) if kpi_gtk['ftr']!='-' else 0,
-                 float(kpi_opp['ftr']) if kpi_opp['ftr']!='-' else 0),
-                ("Straty (BR)",suma_gtk.get('br',0),suma_opp.get('br',0),"Liczba strat — niższy = lepszy",
+                ("Straty (BR)",suma_gtk.get('br',0),suma_opp.get('br',0),"Liczba strat — niższy = lepszy","br",
                  suma_opp.get('br',0),suma_gtk.get('br',0)),
-                ("Faule wymuszone",suma_gtk.get('fd',0),suma_opp.get('fd',0),"Liczba wymuszonych fauli",
+                ("Faule wymuszone",suma_gtk.get('fd',0),suma_opp.get('fd',0),"Liczba wymuszonych fauli","fd",
                  suma_gtk.get('fd',0),suma_opp.get('fd',0)),
-                ("2PM/A",f"{suma_gtk.get('p2m',0)}/{suma_gtk.get('p2a',0)}",f"{suma_opp.get('p2m',0)}/{suma_opp.get('p2a',0)}","Celne / próby za 2 pkt",suma_gtk.get('p2m',0),suma_opp.get('p2m',0)),
-                ("3PM/A",f"{suma_gtk.get('p3m',0)}/{suma_gtk.get('p3a',0)}",f"{suma_opp.get('p3m',0)}/{suma_opp.get('p3a',0)}","Celne / próby za 3 pkt",suma_gtk.get('p3m',0),suma_opp.get('p3m',0)),
-                ("FTM/A",f"{suma_gtk.get('ftm',0)}/{suma_gtk.get('fta',0)}",f"{suma_opp.get('ftm',0)}/{suma_opp.get('fta',0)}","Celne / próby rzutów wolnych",suma_gtk.get('ftm',0),suma_opp.get('ftm',0)),
+                ("2PM/A",f"{suma_gtk.get('p2m',0)}/{suma_gtk.get('p2a',0)}",f"{suma_opp.get('p2m',0)}/{suma_opp.get('p2a',0)}","Celne / próby za 2 pkt","p2m",suma_gtk.get('p2m',0),suma_opp.get('p2m',0)),
+                ("3PM/A",f"{suma_gtk.get('p3m',0)}/{suma_gtk.get('p3a',0)}",f"{suma_opp.get('p3m',0)}/{suma_opp.get('p3a',0)}","Celne / próby za 3 pkt","p3m",suma_gtk.get('p3m',0),suma_opp.get('p3m',0)),
+                ("FTM/A",f"{suma_gtk.get('ftm',0)}/{suma_gtk.get('fta',0)}",f"{suma_opp.get('ftm',0)}/{suma_opp.get('fta',0)}","Celne / próby rzutów wolnych","ftm",suma_gtk.get('ftm',0),suma_opp.get('ftm',0)),
               ])}
             </tbody>
           </table>
         </div></div>
       </div>
+
       <div class="col-lg-7">
-        <div class="card"><div class="card-body p-3">
-          <div class="section-hdr">Punkty per kwarta</div>
+        <div class="card" id="detailCard"><div class="card-body p-3">
+          <div id="detailTitle" class="section-hdr">Punkty per kwarta</div>
           <canvas id="qChart"></canvas>
+          <div id="qBreakdown" style="display:none">
+            <canvas id="qDetailChart"></canvas>
+            <div id="qDetailTable" class="mt-2"></div>
+          </div>
         </div></div>
       </div>
     </div>
@@ -1267,13 +1272,179 @@ def mecz(match_id):
 </div>"""
 
     scripts = f"""<script>
-new Chart(document.getElementById('qChart'),{{
-  type:'bar',
-  data:{{labels:['1Q','2Q','3Q','4Q'],datasets:[
-    {{label:'{gtk_name}',data:{pts_q_gtk},backgroundColor:'#1a6b3c88',borderColor:'#1a6b3c',borderWidth:2,borderRadius:6}},
-    {{label:'{name_opp}',data:{pts_q_opp},backgroundColor:'#8b1a1a88',borderColor:'#8b1a1a',borderWidth:2,borderRadius:6}}
-  ]}},
-  options:{{responsive:true,plugins:{{legend:{{position:'top'}}}},scales:{{y:{{beginAtZero:true}}}}}}
+// ── Dane per kwarta ─────────────────────────────────────────────────────────
+const qData = {{
+  gtk: {{
+    pts:  {[next((r['pts']  for r in all_stats if r['druzyna']=='gtk' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    poss: {[next((r['poss'] for r in all_stats if r['druzyna']=='gtk' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    p2m:  {[next((r['p2m']  for r in all_stats if r['druzyna']=='gtk' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    p2a:  {[next((r['p2a']  for r in all_stats if r['druzyna']=='gtk' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    p3m:  {[next((r['p3m']  for r in all_stats if r['druzyna']=='gtk' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    p3a:  {[next((r['p3a']  for r in all_stats if r['druzyna']=='gtk' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    ftm:  {[next((r['ftm']  for r in all_stats if r['druzyna']=='gtk' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    fta:  {[next((r['fta']  for r in all_stats if r['druzyna']=='gtk' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    br:   {[next((r['br']   for r in all_stats if r['druzyna']=='gtk' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    fd:   {[next((r['fd']   for r in all_stats if r['druzyna']=='gtk' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+  }},
+  opp: {{
+    pts:  {[next((r['pts']  for r in all_stats if r['druzyna']=='opp' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    poss: {[next((r['poss'] for r in all_stats if r['druzyna']=='opp' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    p2m:  {[next((r['p2m']  for r in all_stats if r['druzyna']=='opp' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    p2a:  {[next((r['p2a']  for r in all_stats if r['druzyna']=='opp' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    p3m:  {[next((r['p3m']  for r in all_stats if r['druzyna']=='opp' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    p3a:  {[next((r['p3a']  for r in all_stats if r['druzyna']=='opp' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    ftm:  {[next((r['ftm']  for r in all_stats if r['druzyna']=='opp' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    fta:  {[next((r['fta']  for r in all_stats if r['druzyna']=='opp' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    br:   {[next((r['br']   for r in all_stats if r['druzyna']=='opp' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+    fd:   {[next((r['fd']   for r in all_stats if r['druzyna']=='opp' and r['kwarta']==q),0) for q in [1,2,3,4]]},
+  }}
+}};
+
+const gtkName = '{gtk_name}';
+const oppName = '{name_opp}';
+
+// ── Funkcja obliczająca wartość metryki per kwarta ──────────────────────────
+function getMetricValues(key) {{
+  const d = qData;
+  return [0,1,2,3].map(i => {{
+    const g = d.gtk, o = d.opp;
+    const pct = (n,dv) => dv>0 ? Math.round(n/dv*1000)/10 : null;
+    switch(key) {{
+      case 'pts':   return [g.pts[i],   o.pts[i]];
+      case 'poss':  return [g.poss[i],  o.poss[i]];
+      case 'p2m':   return [g.p2m[i],   o.p2m[i]];
+      case 'p3m':   return [g.p3m[i],   o.p3m[i]];
+      case 'ftm':   return [g.ftm[i],   o.ftm[i]];
+      case 'br':    return [g.br[i],    o.br[i]];
+      case 'fd':    return [g.fd[i],    o.fd[i]];
+      case 'efg':   return [
+        pct(g.p2m[i]+1.5*g.p3m[i], g.p2a[i]+g.p3a[i]),
+        pct(o.p2m[i]+1.5*o.p3m[i], o.p2a[i]+o.p3a[i])
+      ];
+      case 'ts':    return [
+        pct(g.pts[i], 2*(g.p2a[i]+g.p3a[i]+0.44*g.fta[i])),
+        pct(o.pts[i], 2*(o.p2a[i]+o.p3a[i]+0.44*o.fta[i]))
+      ];
+      case 'ortg':  return [
+        g.poss[i]>0 ? Math.round(g.pts[i]*100/g.poss[i]*10)/10 : null,
+        o.poss[i]>0 ? Math.round(o.pts[i]*100/o.poss[i]*10)/10 : null
+      ];
+      case 'ppp':   return [
+        g.poss[i]>0 ? Math.round(g.pts[i]/g.poss[i]*100)/100 : null,
+        o.poss[i]>0 ? Math.round(o.pts[i]/o.poss[i]*100)/100 : null
+      ];
+      case 'p2_pct': return [pct(g.p2m[i],g.p2a[i]), pct(o.p2m[i],o.p2a[i])];
+      case 'p3_pct': return [pct(g.p3m[i],g.p3a[i]), pct(o.p3m[i],o.p3a[i])];
+      case 'ft_pct': return [pct(g.ftm[i],g.fta[i]), pct(o.ftm[i],o.fta[i])];
+      default: return [0,0];
+    }}
+  }});
+}}
+
+// ── Domyślny wykres punktów ─────────────────────────────────────────────────
+let activeChart = null;
+
+function showDefaultChart() {{
+  if(activeChart) {{ activeChart.destroy(); activeChart=null; }}
+  document.getElementById('qChart').style.display = 'block';
+  document.getElementById('qBreakdown').style.display = 'none';
+  document.getElementById('detailTitle').textContent = 'Punkty per kwarta';
+  activeChart = new Chart(document.getElementById('qChart'),{{
+    type:'bar',
+    data:{{labels:['1Q','2Q','3Q','4Q'],datasets:[
+      {{label:gtkName, data:qData.gtk.pts, backgroundColor:'#1a6b3c88', borderColor:'#1a6b3c', borderWidth:2, borderRadius:6}},
+      {{label:oppName, data:qData.opp.pts, backgroundColor:'#8b1a1a88', borderColor:'#8b1a1a', borderWidth:2, borderRadius:6}}
+    ]}},
+    options:{{responsive:true,plugins:{{legend:{{position:'top'}}}},scales:{{y:{{beginAtZero:true}}}}}}
+  }});
+}}
+showDefaultChart();
+
+// ── Kliknięcie metryki ──────────────────────────────────────────────────────
+let detailChart = null;
+let selectedRow = null;
+
+document.querySelectorAll('.metric-row').forEach(row => {{
+  row.addEventListener('click', function() {{
+    const key = this.dataset.metric;
+    const label = this.querySelector('b').textContent;
+
+    // Podświetl wybrany wiersz
+    document.querySelectorAll('.metric-row').forEach(r => r.style.background='');
+    this.style.background = '#f0f4ff';
+    selectedRow = this;
+
+    const vals = getMetricValues(key);
+    const gtkVals = vals.map(v => v[0]);
+    const oppVals = vals.map(v => v[1]);
+
+    // Ukryj główny wykres, pokaż breakdown
+    document.getElementById('qChart').style.display = 'none';
+    document.getElementById('qBreakdown').style.display = 'block';
+    document.getElementById('detailTitle').textContent = label + ' — per kwarta';
+
+    // Zniszcz stary wykres
+    if(detailChart) {{ detailChart.destroy(); detailChart=null; }}
+    if(activeChart) {{ activeChart.destroy(); activeChart=null; }}
+
+    // Nowy wykres
+    detailChart = new Chart(document.getElementById('qDetailChart'),{{
+      type:'bar',
+      data:{{
+        labels:['1Q','2Q','3Q','4Q'],
+        datasets:[
+          {{label:gtkName, data:gtkVals, backgroundColor:'#1a6b3c88', borderColor:'#1a6b3c', borderWidth:2, borderRadius:6}},
+          {{label:oppName, data:oppVals, backgroundColor:'#8b1a1a88', borderColor:'#8b1a1a', borderWidth:2, borderRadius:6}}
+        ]
+      }},
+      options:{{
+        responsive:true,
+        plugins:{{
+          legend:{{position:'top'}},
+          tooltip:{{callbacks:{{label: ctx => ctx.dataset.label+': '+(ctx.raw!==null?ctx.raw:'-')}}}}
+        }},
+        scales:{{y:{{beginAtZero:true}}}}
+      }}
+    }});
+
+    // Mini tabela pod wykresem
+    const isPercent = ['efg','ts','p2_pct','p3_pct','ft_pct'].includes(key);
+    let tableHtml = '<table class="table table-sm mb-0" style="font-size:.8rem"><thead><tr><th>Kwarta</th>';
+    tableHtml += `<th class="text-center" style="color:#1a6b3c">${{gtkName}}</th>`;
+    tableHtml += `<th class="text-center" style="color:#8b1a1a">${{oppName}}</th>`;
+    tableHtml += '<th class="text-center" style="color:#888">Różnica</th></tr></thead><tbody>';
+    const labels = ['1Q','2Q','3Q','4Q'];
+    for(let i=0;i<4;i++) {{
+      const gv = gtkVals[i]; const ov = oppVals[i];
+      const fmt = v => v===null ? '-' : (isPercent ? v.toFixed(1)+'%' : v);
+      let diff = '-'; let diffColor='#888';
+      if(gv!==null && ov!==null) {{
+        const d = Math.round((gv-ov)*100)/100;
+        diff = (d>0?'+':'')+fmt(d);
+        diffColor = d>0 ? '#1a6b3c' : (d<0 ? '#8b1a1a' : '#888');
+      }}
+      const bgG = gv!==null && ov!==null && gv>ov ? 'background:#f0fff4' : '';
+      const bgO = gv!==null && ov!==null && ov>gv ? 'background:#fff0f0' : '';
+      tableHtml += `<tr><td class="fw-bold">${{labels[i]}}</td>`;
+      tableHtml += `<td class="text-center fw-bold" style="${{bgG}};color:#1a6b3c">${{fmt(gv)}}</td>`;
+      tableHtml += `<td class="text-center fw-bold" style="${{bgO}};color:#8b1a1a">${{fmt(ov)}}</td>`;
+      tableHtml += `<td class="text-center" style="color:${{diffColor}}">${{diff}}</td></tr>`;
+    }}
+    tableHtml += '</tbody></table>';
+    document.getElementById('qDetailTable').innerHTML = tableHtml;
+  }});
+}});
+
+// Kliknięcie poza tabelą → wróć do domyślnego wykresu
+document.addEventListener('click', function(e) {{
+  if(!e.target.closest('#metricsTable') && !e.target.closest('#detailCard')) {{
+    if(selectedRow) {{
+      selectedRow.style.background='';
+      selectedRow=null;
+      if(detailChart){{ detailChart.destroy(); detailChart=null; }}
+      showDefaultChart();
+    }}
+  }}
 }});
 </script>"""
 
