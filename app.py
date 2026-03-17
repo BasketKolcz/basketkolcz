@@ -146,7 +146,7 @@ def set_setting(key, value):
 # PARSER (identyczny jak w app_v2.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
-ACTION_2PM = {"2","2+1","2+0","2D"}
+ACTION_2PM = {"2","2+1","2+0","2D","2D+1","2D+0/1W","2D+1/1W"}
 ACTION_3PM = {"3","3+1","3+0"}
 ACTION_BR  = {"BR"}
 ACTION_F   = {"F"}
@@ -255,7 +255,7 @@ def parse_team_sheet(ws):
                     stats["players"][finisher]["p2m"]+=1; stats["players"][finisher]["p2a"]+=1
                     stats["players"][finisher]["finishes"]+=1
                     if assister is not None: stats["players"][assister]["ast"]+=1
-            elif code in ("0/2","0/2D"):
+            elif code in ("0/2","0/2D","0D+0/2W","0D+1/2W"):
                 q["p2a"]+=1
                 stats["timing"][bucket]["2PT"]["miss"]+=1
                 if finisher is not None: stats["players"][finisher]["p2a"]+=1; stats["players"][finisher]["finishes"]+=1
@@ -862,12 +862,12 @@ def index():
 VALID_CODES = {
     "2","0/2","3","0/3","BR","P","F",
     "2+1","2+0","3+1","3+0",
-    "2D","0/2D",
+    "2D","0/2D","2D+1","2D+0/1W","2D+1/1W",
     "1/2W","2/2W","0/2W",
     "1/3W","2/3W","3/3W","0/3W",
     "1/2WL","2/2WL","0/2WL",
     "1/1WT","0/1WT",
-    "0D0/2W","2D0/1W","2D1/1W"
+    "0D+0/2W","0D+1/2W"
 }
 
 def read_meta(wb):
@@ -2502,27 +2502,42 @@ def zawodnicy():
     try:
         cur.execute("""
             SELECT
-                COALESCE(r.id::text, 'nr_'||ps.nr::text) as grp_id,
-                CASE WHEN r.id IS NOT NULL
-                     THEN r.nazwisko || ' ' || r.imie
-                     ELSE '— nieprzypisany #' || ps.nr::text
-                END as nazwa,
-                SUM(ps.pts) as pts, SUM(ps.p2m) as p2m, SUM(ps.p2a) as p2a,
-                SUM(ps.p3m) as p3m, SUM(ps.p3a) as p3a,
-                SUM(ps.ftm) as ftm, SUM(ps.fta) as fta,
-                SUM(ps.ast) as ast, SUM(ps.oreb) as oreb, SUM(ps.dreb) as dreb,
-                SUM(ps.br) as br, SUM(ps.fd) as fd, SUM(ps.finishes) as finishes,
-                COUNT(DISTINCT ps.match_id) as mecze,
-                (r.id IS NULL) as ma_nieprzypisane
-            FROM player_stats ps
-            JOIN matches m ON ps.match_id=m.id
-            LEFT JOIN roster r ON ps.roster_id=r.id
-            WHERE m.sezon=%s AND ps.druzyna='gtk'
-            GROUP BY r.id, r.imie, r.nazwisko,
-                     CASE WHEN r.id IS NOT NULL THEN NULL ELSE ps.nr END
-            ORDER BY ma_nieprzypisane ASC, pts DESC
+                grp_id, nazwa,
+                SUM(pts) as pts, SUM(p2m) as p2m, SUM(p2a) as p2a,
+                SUM(p3m) as p3m, SUM(p3a) as p3a,
+                SUM(ftm) as ftm, SUM(fta) as fta,
+                SUM(ast) as ast, SUM(oreb) as oreb, SUM(dreb) as dreb,
+                SUM(br) as br, SUM(fd) as fd, SUM(finishes) as finishes,
+                COUNT(DISTINCT match_id) as mecze,
+                BOOL_OR(ma_nieprzypisane) as ma_nieprzypisane
+            FROM (
+                SELECT
+                    CASE WHEN r.id IS NOT NULL THEN r.id::text
+                         ELSE 'nr_'||ps.nr::text END as grp_id,
+                    CASE WHEN r.id IS NOT NULL
+                         THEN r.nazwisko || ' ' || r.imie
+                         ELSE '— nieprzypisany #' || ps.nr::text
+                    END as nazwa,
+                    ps.match_id,
+                    SUM(ps.pts) as pts, SUM(ps.p2m) as p2m, SUM(ps.p2a) as p2a,
+                    SUM(ps.p3m) as p3m, SUM(ps.p3a) as p3a,
+                    SUM(ps.ftm) as ftm, SUM(ps.fta) as fta,
+                    SUM(ps.ast) as ast, SUM(ps.oreb) as oreb, SUM(ps.dreb) as dreb,
+                    SUM(ps.br) as br, SUM(ps.fd) as fd, SUM(ps.finishes) as finishes,
+                    (r.id IS NULL) as ma_nieprzypisane
+                FROM player_stats ps
+                JOIN matches m ON ps.match_id=m.id
+                LEFT JOIN roster r ON ps.roster_id=r.id
+                WHERE m.sezon=%s AND ps.druzyna='gtk'
+                GROUP BY r.id, r.imie, r.nazwisko, ps.nr, ps.match_id
+            ) sub
+            GROUP BY grp_id, nazwa
+            ORDER BY BOOL_OR(ma_nieprzypisane) ASC, SUM(pts) DESC
         """, (sezon_filter,))
-    except:
+    except Exception:
+        try: get_db().rollback()
+        except: pass
+        cur = get_db().cursor()
         cur.execute("""
             SELECT ps.nr::text as grp_id,
                    '— nieprzypisany #'||ps.nr::text as nazwa,
@@ -2536,7 +2551,7 @@ def zawodnicy():
             FROM player_stats ps
             JOIN matches m ON ps.match_id=m.id
             WHERE m.sezon=%s AND ps.druzyna='gtk'
-            GROUP BY ps.nr ORDER BY pts DESC
+            GROUP BY ps.nr ORDER BY SUM(ps.pts) DESC
         """, (sezon_filter,))
     players = cur.fetchall()
     cur.close()
@@ -3885,10 +3900,19 @@ def template_zapis():
                   left=Side(style="thin",color="CCCCCC"),top=Side(style="thin",color="CCCCCC"))
 
     KODY=[("2","Celny rzut za 2"),("0/2","Niecelny rzut za 2"),("3","Celny rzut za 3"),
-          ("0/3","Niecelny rzut za 3"),("BR","Strata"),("P","Przewinienie"),("F","Faul"),
-          ("2+1","2pkt + RW"),("2D","Tip-in celny"),("0/2D","Tip-in niecelny"),
-          ("1/2W","1/2 RW"),("2/2W","2/2 RW"),("0/2W","0/2 RW"),("3+1","3pkt + RW"),
-          ("1/3W","1/3 RW"),("2/3W","2/3 RW"),("3/3W","3/3 RW"),("0/3W","0/3 RW")]
+          ("0/3","Niecelny rzut za 3"),("BR","Strata"),("P","Przerwanie"),("F","Faul"),
+          ("2+1","2pkt + faul (1 RW)"),("2+0","2pkt + faul (0/1 RW)"),
+          ("3+1","3pkt + faul (1 RW)"),("3+0","3pkt + faul (0/1 RW)"),
+          ("2D","Dobitka celna"),("0/2D","Dobitka niecelna"),
+          ("2D+1","Dobitka celna + faul (bez RW)"),
+          ("2D+0/1W","Celna dobitka + faul (RW niecelny)"),
+          ("2D+1/1W","Celna dobitka + faul (RW celny)"),
+          ("0D+0/2W","Niecelna dobitka + faul (2 RW niecelne)"),
+          ("0D+1/2W","Niecelna dobitka + faul (1/2 RW celny)"),
+          ("1/2W","1/2 RW"),("2/2W","2/2 RW"),("0/2W","0/2 RW"),
+          ("1/3W","1/3 RW"),("2/3W","2/3 RW"),("3/3W","3/3 RW"),("0/3W","0/3 RW"),
+          ("1/2WL","1/2 RW — ostatni"),("2/2WL","2/2 RW — ostatni"),("0/2WL","0/2 RW — ostatni"),
+          ("1/1WT","1/1 RW — techniczny"),("0/1WT","0/1 RW — techniczny")]
 
     ws_k=wb.active; ws_k.title="KODY"
     ws_k.merge_cells("A1:B1"); t=ws_k["A1"]; t.value="KODY AKCJI"; t.fill=HDR; t.font=Font(color="FFFFFF",bold=True,size=12); t.alignment=CTR
