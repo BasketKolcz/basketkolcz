@@ -23,16 +23,22 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 def get_db():
     if "db" not in g:
         g.db = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        g.db.autocommit = False
     return g.db
 
 @app.teardown_appcontext
 def close_db(e=None):
     db = g.pop("db", None)
-    if db: db.close()
+    if db:
+        try: db.rollback()
+        except: pass
+        try: db.close()
+        except: pass
 
 def init_db():
     db = get_db()
     cur = db.cursor()
+    # Tabele główne
     cur.execute("""
     CREATE TABLE IF NOT EXISTS matches (
         id SERIAL PRIMARY KEY,
@@ -47,60 +53,35 @@ def init_db():
         wynik_opp INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW()
     );
-
-    ALTER TABLE matches ADD COLUMN IF NOT EXISTS nazwa_gtk VARCHAR(100) DEFAULT '';
-    ALTER TABLE matches ADD COLUMN IF NOT EXISTS rozgrywki VARCHAR(100) DEFAULT '';
-    ALTER TABLE matches ADD COLUMN IF NOT EXISTS runda VARCHAR(50) DEFAULT '';
-    ALTER TABLE matches ADD COLUMN IF NOT EXISTS miejsce VARCHAR(20) DEFAULT '';
-
     CREATE TABLE IF NOT EXISTS match_stats (
         id SERIAL PRIMARY KEY,
         match_id INTEGER REFERENCES matches(id) ON DELETE CASCADE,
         druzyna VARCHAR(10) NOT NULL,
         kwarta INTEGER NOT NULL,
-        pts INTEGER DEFAULT 0,
-        poss INTEGER DEFAULT 0,
-        p2m INTEGER DEFAULT 0,
-        p2a INTEGER DEFAULT 0,
-        p3m INTEGER DEFAULT 0,
-        p3a INTEGER DEFAULT 0,
-        ftm INTEGER DEFAULT 0,
-        fta INTEGER DEFAULT 0,
-        br INTEGER DEFAULT 0,
-        fd INTEGER DEFAULT 0
+        pts INTEGER DEFAULT 0, poss INTEGER DEFAULT 0,
+        p2m INTEGER DEFAULT 0, p2a INTEGER DEFAULT 0,
+        p3m INTEGER DEFAULT 0, p3a INTEGER DEFAULT 0,
+        ftm INTEGER DEFAULT 0, fta INTEGER DEFAULT 0,
+        br INTEGER DEFAULT 0, fd INTEGER DEFAULT 0
     );
-
     CREATE TABLE IF NOT EXISTS player_stats (
         id SERIAL PRIMARY KEY,
         match_id INTEGER REFERENCES matches(id) ON DELETE CASCADE,
         druzyna VARCHAR(10) NOT NULL,
         nr INTEGER NOT NULL,
-        pts INTEGER DEFAULT 0,
-        p2m INTEGER DEFAULT 0,
-        p2a INTEGER DEFAULT 0,
-        p3m INTEGER DEFAULT 0,
-        p3a INTEGER DEFAULT 0,
-        ftm INTEGER DEFAULT 0,
-        fta INTEGER DEFAULT 0,
-        ast INTEGER DEFAULT 0,
-        oreb INTEGER DEFAULT 0,
-        dreb INTEGER DEFAULT 0,
-        br INTEGER DEFAULT 0,
-        fd INTEGER DEFAULT 0,
-        finishes INTEGER DEFAULT 0
+        pts INTEGER DEFAULT 0, p2m INTEGER DEFAULT 0, p2a INTEGER DEFAULT 0,
+        p3m INTEGER DEFAULT 0, p3a INTEGER DEFAULT 0,
+        ftm INTEGER DEFAULT 0, fta INTEGER DEFAULT 0,
+        ast INTEGER DEFAULT 0, oreb INTEGER DEFAULT 0, dreb INTEGER DEFAULT 0,
+        br INTEGER DEFAULT 0, fd INTEGER DEFAULT 0, finishes INTEGER DEFAULT 0
     );
-
     CREATE TABLE IF NOT EXISTS timing_stats (
         id SERIAL PRIMARY KEY,
         match_id INTEGER REFERENCES matches(id) ON DELETE CASCADE,
-        druzyna VARCHAR(10) NOT NULL,
-        bucket VARCHAR(10) NOT NULL,
-        made2 INTEGER DEFAULT 0,
-        att2 INTEGER DEFAULT 0,
-        made3 INTEGER DEFAULT 0,
-        att3 INTEGER DEFAULT 0
+        druzyna VARCHAR(10) NOT NULL, bucket VARCHAR(10) NOT NULL,
+        made2 INTEGER DEFAULT 0, att2 INTEGER DEFAULT 0,
+        made3 INTEGER DEFAULT 0, att3 INTEGER DEFAULT 0
     );
-
     CREATE TABLE IF NOT EXISTS roster (
         id SERIAL PRIMARY KEY,
         imie VARCHAR(50) NOT NULL,
@@ -109,7 +90,6 @@ def init_db():
         aktywny BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT NOW()
     );
-
     CREATE TABLE IF NOT EXISTS player_aliases (
         id SERIAL PRIMARY KEY,
         roster_id INTEGER REFERENCES roster(id) ON DELETE CASCADE,
@@ -117,17 +97,34 @@ def init_db():
         sezon VARCHAR(20) DEFAULT '',
         UNIQUE(roster_id, nr, sezon)
     );
-
-    ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS roster_id INTEGER REFERENCES roster(id) ON DELETE SET NULL;
-
+    CREATE TABLE IF NOT EXISTS settings (
+        key VARCHAR(50) PRIMARY KEY,
         value VARCHAR(200)
     );
-
     INSERT INTO settings (key, value) VALUES ('gtk_name', 'GTK') ON CONFLICT DO NOTHING;
     INSERT INTO settings (key, value) VALUES ('current_season', '2024/25') ON CONFLICT DO NOTHING;
     """)
     db.commit()
+
+    # ALTER TABLE — każdy osobno z savepoint
+    alters = [
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS nazwa_gtk VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS rozgrywki VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS runda VARCHAR(50) DEFAULT ''",
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS miejsce VARCHAR(20) DEFAULT ''",
+        "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS roster_id INTEGER REFERENCES roster(id) ON DELETE SET NULL",
+    ]
+    for sql in alters:
+        try:
+            cur.execute("SAVEPOINT sp")
+            cur.execute(sql)
+            cur.execute("RELEASE SAVEPOINT sp")
+            db.commit()
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT sp")
+            db.commit()
     cur.close()
+
 
 def get_setting(key):
     db = get_db()
@@ -628,6 +625,9 @@ body{margin:0;background:var(--bg);font-family:'Segoe UI',system-ui,sans-serif;f
   .btn-sm{font-size:.72rem;padding:.25rem .5rem}
   .nav-tabs .nav-link{font-size:.75rem;padding:.35rem .5rem}
 }
+.nav-submenu{background:#ffffff08;border-radius:6px;margin:2px 6px 4px}
+.nav-group>.nav-item-link{border-radius:8px;display:flex;align-items:center}
+@media(max-width:991px){.nav-group .brand-text,.nav-submenu{display:none!important}}
 </style>
 """
 
@@ -643,9 +643,11 @@ def nav(active="home"):
         ("home",     "/",          "🏠", "Strona główna"),
         ("history",  "/historia",  "📋", "Historia meczów"),
         ("season",   "/sezon",     "📊", "Statystyki sezonu"),
-        ("players",  "/zawodnicy", "👤", "Zawodnicy sezonu"),
-        ("roster",   "/roster",    "👥", "Roster"),
         ("settings", "/ustawienia","⚙️", "Ustawienia"),
+    ]
+    team_items = [
+        ("roster",   "/roster",    "👥", "Skład drużyny"),
+        ("players",  "/zawodnicy", "📈", "Statystyki indywidualne"),
     ]
     links = ""
     for key, href, icon, label in items:
@@ -653,6 +655,30 @@ def nav(active="home"):
         links += (f'<a href="{href}" class="{cls}" data-label="{label}">'
                   f'<span class="icon">{icon}</span>'
                   f'<span class="brand-text">{label}</span></a>')
+
+    # Drużyna — sekcja z podmenu
+    team_open = active in ("players","roster")
+    team_links = ""
+    for key, href, icon, label in team_items:
+        cls = "nav-item-link active" if active==key else "nav-item-link"
+        team_links += (f'<a href="{href}" class="{cls}" data-label="{label}" '
+                       f'style="padding-left:1.4rem;font-size:.8rem">'
+                       f'<span class="icon" style="font-size:.8rem">{icon}</span>'
+                       f'<span class="brand-text">{label}</span></a>')
+
+    team_section = f"""
+<div class="nav-group brand-text">
+  <div class="nav-item-link {'active' if team_open else ''}"
+       style="cursor:pointer" data-label="Drużyna"
+       onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display=='none'?'block':'none'">
+    <span class="icon">🏀</span>
+    <span class="brand-text">Drużyna</span>
+    <span class="brand-text ms-auto" style="font-size:.7rem;opacity:.6">{'▼' if team_open else '▶'}</span>
+  </div>
+  <div class="nav-submenu" style="display:{'block' if team_open else 'none'}">
+    {team_links}
+  </div>
+</div>"""
 
     return f"""
 <!-- TOPBAR mobile -->
@@ -675,6 +701,7 @@ def nav(active="home"):
   <div class="nav-season brand-text"><strong>{gtk_name}</strong>Sezon {season}</div>
   <div class="nav-section brand-text">Nawigacja</div>
   {links}
+  {team_section}
 </div>
 
 <script>
@@ -1198,6 +1225,9 @@ def upload():
 
     except Exception as e:
         import traceback
+        try:
+            get_db().rollback()
+        except: pass
         flash(f"Błąd wgrywania: {str(e)}","error")
         return redirect(url_for("index"))
 
@@ -1559,6 +1589,8 @@ def upload_force():
         except: pass
         return _do_save(wb, report["names"][0], report["names"][1], sezon, data_meczu)
     except Exception as e:
+        try: get_db().rollback()
+        except: pass
         flash(f"Błąd zapisu: {str(e)}","error")
         return redirect(url_for("index"))
 
