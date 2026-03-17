@@ -101,6 +101,18 @@ def init_db():
         key VARCHAR(50) PRIMARY KEY,
         value VARCHAR(200)
     );
+    CREATE TABLE IF NOT EXISTS lineup_stats (
+        id SERIAL PRIMARY KEY,
+        match_id INTEGER REFERENCES matches(id) ON DELETE CASCADE,
+        druzyna VARCHAR(10) NOT NULL,
+        lineup VARCHAR(30) NOT NULL,
+        pts INTEGER DEFAULT 0,
+        poss INTEGER DEFAULT 0,
+        p2m INTEGER DEFAULT 0, p2a INTEGER DEFAULT 0,
+        p3m INTEGER DEFAULT 0, p3a INTEGER DEFAULT 0,
+        ftm INTEGER DEFAULT 0, fta INTEGER DEFAULT 0,
+        br INTEGER DEFAULT 0, fd INTEGER DEFAULT 0
+    );
     INSERT INTO settings (key, value) VALUES ('gtk_name', 'GTK') ON CONFLICT DO NOTHING;
     INSERT INTO settings (key, value) VALUES ('current_season', '2024/25') ON CONFLICT DO NOTHING;
     """)
@@ -173,6 +185,7 @@ def parse_team_sheet(ws):
         "quarter": defaultdict(lambda: {"ftm":0,"fta":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"br":0,"fd":0,"poss":0,"pts":0}),
         "players": defaultdict(lambda: {"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"fd":0,"br":0,"finishes":0,"ast":0,"oreb":0,"dreb":0}),
         "timing":  {b: {"2PT":{"made":0,"miss":0},"3PT":{"made":0,"miss":0}} for b in BUCKETS},
+        "lineups": defaultdict(lambda: {"pts":0,"poss":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"br":0,"fd":0}),
     }
     current_q = 1
     current_lineup = []
@@ -288,6 +301,27 @@ def parse_team_sheet(ws):
 
             q["pts"] += pts
 
+            # Lineup tracking
+            if len(current_lineup) == 5:
+                lk = "-".join(str(x) for x in sorted(current_lineup))
+                lu = stats["lineups"][lk]
+                lu["poss"] += 1
+                lu["pts"]  += pts
+                if code in ACTION_2PM:
+                    lu["p2m"]+=1; lu["p2a"]+=1
+                elif code in ("0/2","0/2D","0D+0/2W","0D+1/2W"):
+                    lu["p2a"]+=1
+                elif code in ACTION_3PM:
+                    lu["p3m"]+=1; lu["p3a"]+=1
+                elif code == "0/3":
+                    lu["p3a"]+=1
+                elif code in ACTION_BR:
+                    lu["br"]+=1
+                elif code in ACTION_F:
+                    lu["fd"]+=1
+                if fta > 0:
+                    lu["ftm"]+=ftm; lu["fta"]+=fta
+
     return stats
 
 def suma_quarters(stats):
@@ -375,6 +409,18 @@ def save_match_to_db(przeciwnik, nazwa_gtk, sezon, data_meczu, stats_gtk, stats_
             """, (match_id, druzyna, b,
                   td["2PT"]["made"], td["2PT"]["made"]+td["2PT"]["miss"],
                   td["3PT"]["made"], td["3PT"]["made"]+td["3PT"]["miss"]))
+
+    # Piątki (lineup stats) — tylko GTK
+    for lineup_key, ld in stats_gtk["lineups"].items():
+        cur.execute("""
+            INSERT INTO lineup_stats (match_id,druzyna,lineup,pts,poss,p2m,p2a,p3m,p3a,ftm,fta,br,fd)
+            VALUES (%s,'gtk',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (match_id, lineup_key,
+              ld["pts"], ld["poss"],
+              ld["p2m"], ld["p2a"],
+              ld["p3m"], ld["p3a"],
+              ld["ftm"], ld["fta"],
+              ld["br"],  ld["fd"]))
 
     db.commit()
     cur.close()
@@ -1776,6 +1822,14 @@ def mecz(match_id):
     cur.execute("SELECT * FROM timing_stats WHERE match_id=%s", (match_id,))
     all_timing = cur.fetchall()
 
+    # Piątki
+    try:
+        cur.execute("""SELECT * FROM lineup_stats WHERE match_id=%s AND druzyna='gtk'
+                       ORDER BY poss DESC""", (match_id,))
+        all_lineups = list(cur.fetchall())
+    except:
+        all_lineups = []
+
     # Mapa roster_id → "Nazwisko I." dla GTK
     try:
         cur.execute("""SELECT ps.id as ps_id, r.imie, r.nazwisko
@@ -1785,6 +1839,16 @@ def mecz(match_id):
         roster_map = {row["ps_id"]: f"{row['nazwisko']} {row['imie'][0]}." for row in cur.fetchall()}
     except:
         roster_map = {}
+
+    # Mapa nr → nazwisko dla piątek
+    try:
+        cur.execute("""SELECT ps.nr, r.imie, r.nazwisko
+                       FROM player_stats ps
+                       JOIN roster r ON ps.roster_id = r.id
+                       WHERE ps.match_id=%s AND ps.druzyna='gtk'""", (match_id,))
+        nr_name_map = {str(row["nr"]): f"{row['nazwisko']} {row['imie'][0]}." for row in cur.fetchall()}
+    except:
+        nr_name_map = {}
     cur.close()
 
     def build_suma(druzyna):
@@ -1929,6 +1993,7 @@ def mecz(match_id):
 <ul class="nav nav-tabs mb-2" id="mainTabs">
   <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabGTK">{gtk_name}</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabOPP">{name_opp}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabLINEUPS">Piątki</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabCMP">Porównanie</button></li>
 </ul>
 
@@ -1960,6 +2025,47 @@ def mecz(match_id):
     <div class="tab-pane fade" id="opp_p"><div class="card mt-1"><div class="card-body p-2">{p_table('opp')}</div></div></div>
     <div class="tab-pane fade" id="opp_t"><div class="card mt-1"><div class="card-body p-2">{tim_table('opp')}</div></div></div>
   </div>
+</div>
+
+<div class="tab-pane fade" id="tabLINEUPS">
+  <div class="card mt-2"><div class="card-body p-2">
+    <p style="font-size:.78rem;color:#aaa">Statystyki piątek — {gtk_name} (posiadania ≥ 1)</p>
+    {'<div class="table-responsive"><table class="table table-hover mb-0"><thead><tr>' +
+     '<th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th>' +
+     '<th class="text-center">PPP</th><th class="text-center">eFG%</th>' +
+     '<th class="text-center">2PM/A</th><th class="text-center">3PM/A</th>' +
+     '<th class="text-center">FTM/A</th><th class="text-center">BR</th>' +
+     '</tr></thead><tbody>' +
+     "".join(
+       (lambda lu, i: (
+         lambda fga, pts, poss, efg, ppp, bg:
+         f'<tr style="background:{bg}">'
+         f'<td style="font-size:.78rem">'
+         + " · ".join(nr_name_map.get(n, f"#{n}") for n in lu["lineup"].split("-"))
+         + f'</td>'
+         f'<td class="text-center">{poss}</td>'
+         f'<td class="text-center fw-bold" style="color:#1a2b4a">{pts}</td>'
+         f'<td class="text-center fw-bold" style="color:{"#1a6b3c" if float(ppp.replace("-","0"))>=0.9 else "#8b1a1a" if float(ppp.replace("-","0"))<0.7 and ppp!="-" else ""}">{ppp}</td>'
+         f'<td class="text-center">{efg}</td>'
+         f'<td class="text-center">{int(lu.get("p2m",0))}/{int(lu.get("p2a",0))}</td>'
+         f'<td class="text-center">{int(lu.get("p3m",0))}/{int(lu.get("p3a",0))}</td>'
+         f'<td class="text-center">{int(lu.get("ftm",0))}/{int(lu.get("fta",0))}</td>'
+         f'<td class="text-center">{int(lu.get("br",0))}</td>'
+         f'</tr>'
+       )(
+         int(lu.get("p2a",0))+int(lu.get("p3a",0)),
+         int(lu.get("pts",0)),
+         int(lu.get("poss",0)),
+         f'{(int(lu.get("p2m",0))+1.5*int(lu.get("p3m",0)))/(int(lu.get("p2a",0))+int(lu.get("p3a",0))):.0%}' if (int(lu.get("p2a",0))+int(lu.get("p3a",0))) else "—",
+         f'{int(lu.get("pts",0))/int(lu.get("poss",0)):.2f}' if int(lu.get("poss",0)) else "—",
+         "#f8f9ff" if i%2==0 else "#fff"
+       )
+       )(lu, i)
+       for i, lu in enumerate(all_lineups)
+     ) +
+     '</tbody></table></div>'
+     if all_lineups else '<p class="text-muted p-3">Brak danych piątek — wgraj plik ponownie aby wygenerować</p>'}
+  </div></div>
 </div>
 
 <div class="tab-pane fade" id="tabCMP">
