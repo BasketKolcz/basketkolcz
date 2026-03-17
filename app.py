@@ -11,20 +11,8 @@ from datetime import datetime
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "basketkolcz2025secret")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SIZE_LIMIT"] = None
+app.config["SESSION_COOKIE_SECURE"] = False
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
-
-# Użyj serwera do przechowywania sesji (nie ciasteczka)
-# Render ma /tmp dostępne
-app.config["SESSION_TYPE"] = "filesystem"
-app.config["SESSION_FILE_DIR"] = "/tmp/flask_sessions"
-os.makedirs("/tmp/flask_sessions", exist_ok=True)
-
-try:
-    from flask_session import Session
-    Session(app)
-except ImportError:
-    pass  # Fallback do cookie session
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -135,7 +123,7 @@ def set_setting(key, value):
 # PARSER (identyczny jak w app_v2.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
-ACTION_2PM = {"2","2+1","2+0","2D","2D+1"}
+ACTION_2PM = {"2","2+1","2+0","2D"}
 ACTION_3PM = {"3","3+1","3+0"}
 ACTION_BR  = {"BR"}
 ACTION_F   = {"F"}
@@ -766,7 +754,7 @@ def index():
 VALID_CODES = {
     "2","0/2","3","0/3","BR","P","F",
     "2+1","2+0","3+1","3+0",
-    "2D","0/2D","2D+1",
+    "2D","0/2D",
     "1/2W","2/2W","0/2W",
     "1/3W","2/3W","3/3W","0/3W",
     "1/2WL","2/2WL","0/2WL",
@@ -992,19 +980,21 @@ def upload():
                 fp.write(file_bytes)
 
             # Zapisz tylko lekkie dane w sesji (bez pliku!)
-            # Zapisz TYLKO niezbędne lekkie dane w sesji
             import re as _re
-            def strip_html(s): return _re.sub(r'<[^>]+>', '', str(s))[:200]
+            def clean(s):
+                s = _re.sub(r'<[^>]+>', '', str(s))
+                return s[:120]
 
-            session["pending_token"]      = token
-            session["pending_sezon"]      = sezon
-            session["pending_data_meczu"] = data_meczu
-            session["validation_report"]  = {
-                "errors":   [strip_html(e) for e in report["errors"][:10]],
-                "warnings": [strip_html(w) for w in report["warnings"][:10]],
-                "info":     [strip_html(i) for i in report["info"][:10]],
-                "names":    list(report["names"]),
-                "pts":      list(report["pts"]),
+            session.clear()
+            session["pt"] = token
+            session["ps"] = sezon
+            session["pd"] = data_meczu or ""
+            session["vr"] = {
+                "e": [clean(e) for e in report["errors"][:8]],
+                "w": [clean(w) for w in report["warnings"][:8]],
+                "i": [clean(i) for i in report["info"][:6]],
+                "n": list(report["names"]),
+                "p": list(report["pts"]),
             }
             return redirect(url_for("validation_report"))
 
@@ -1020,7 +1010,7 @@ def upload():
 @app.route("/walidacja/pobierz-z-bledami")
 def download_with_errors():
     """Pobierz oryginalny plik z zaznaczonymi błędami na czerwono"""
-    token = session.get("pending_token","")
+    token = session.get("pt","")
     if not token:
         flash("Sesja wygasła — wgraj plik ponownie","error")
         return redirect(url_for("index"))
@@ -1139,7 +1129,7 @@ def download_with_errors():
         wb.save(buf)
         buf.seek(0)
 
-        names = session.get("validation_report", {}).get("names", ["plik","plik"])
+        names = session.get("vr", {}).get("n", ["plik","plik"])
         filename = f"BLEDY_{names[0]}_vs_{names[1]}.xlsx".replace(" ","_")
         return send_file(buf, as_attachment=True, download_name=filename,
                          mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -1151,15 +1141,15 @@ def download_with_errors():
 
 @app.route("/walidacja")
 def validation_report():
-    report = session.get("validation_report")
-    if not report:
+    vr = session.get("vr")
+    if not vr:
         return redirect(url_for("index"))
 
-    errors   = report.get("errors",[])
-    warnings = report.get("warnings",[])
-    info     = report.get("info",[])
-    names    = report.get("names",["?","?"])
-    pts      = report.get("pts",[0,0])
+    errors   = vr.get("e",[])
+    warnings = vr.get("w",[])
+    info     = vr.get("i",[])
+    names    = vr.get("n",["?","?"])
+    pts      = vr.get("p",[0,0])
     has_errors = len(errors) > 0
 
     def render_items(items, cls, icon):
@@ -1213,9 +1203,9 @@ def validation_report():
 @app.route("/upload/force", methods=["POST"])
 def upload_force():
     """Zapisz plik mimo ostrzeżeń"""
-    token      = session.get("pending_token","")
-    sezon      = session.get("pending_sezon","2024/25")
-    data_meczu = session.get("pending_data_meczu")
+    token      = session.get("pt","")
+    sezon      = session.get("ps","2024/25")
+    data_meczu = session.get("pd")
 
     if not token:
         flash("Sesja wygasła — wgraj plik ponownie","error")
