@@ -642,7 +642,7 @@ def nav(active="home"):
     items = [
         ("home",     "/",          "🏠", "Strona główna"),
         ("history",  "/historia",  "📋", "Historia meczów"),
-        ("season",   "/sezon",     "📊", "Statystyki sezonu"),
+        ("season",   "/sezon",     "📊", "Statystyki drużyny"),
         ("settings", "/ustawienia","⚙️", "Ustawienia"),
     ]
     team_items = [
@@ -2074,10 +2074,10 @@ def mecz(match_id):
               <td class="fw-bold" style="font-size:.82rem">{b}</td>
               <td class="text-center" style="font-size:.82rem;background:#f0fff4">{(lambda gd: f"{gd.get('made2',0)+gd.get('made3',0)}/{gd.get('att2',0)+gd.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
               <td class="text-center" style="font-size:.85rem;font-weight:700;color:#1a6b3c;background:#f0fff4">{(lambda gd: f"{(gd.get('made2',0)+gd.get('made3',0))/(gd.get('att2',0)+gd.get('att3',0)):.0%}" if (gd.get('att2',0)+gd.get('att3',0)) else "—")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
-              <td style="font-size:.75rem;color:#555;background:#f0fff4">{(lambda gd: f"{gd.get('made2',0)}/{gd.get('att2',0)} | {gd.get('made3',0)}/{gd.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
+              <td style="font-size:.75rem;color:#555;background:#f0fff4;text-align:center">{(lambda gd: f"{gd.get('made2',0)}/{gd.get('att2',0)} | {gd.get('made3',0)}/{gd.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
               <td style="padding:6px 8px"><div style="height:8px;width:{int((next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}).get('att3',0))/max(max((next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==bb),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==bb),{}).get('att3',0)) for bb in BUCKETS),1)*80)}px;background:#1a6b3c;border-radius:4px"></div></td>
               <td style="padding:6px 8px"><div style="height:8px;width:{int((next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}).get('att3',0))/max(max((next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==bb),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==bb),{}).get('att3',0)) for bb in BUCKETS),1)*80)}px;background:#8b1a1a;border-radius:4px"></div></td>
-              <td style="font-size:.75rem;color:#555;background:#fff5f5">{(lambda od: f"{od.get('made2',0)}/{od.get('att2',0)} | {od.get('made3',0)}/{od.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
+              <td style="font-size:.75rem;color:#555;background:#fff5f5;text-align:center">{(lambda od: f"{od.get('made2',0)}/{od.get('att2',0)} | {od.get('made3',0)}/{od.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
               <td class="text-center" style="font-size:.85rem;font-weight:700;color:#8b1a1a;background:#fff5f5">{(lambda od: f"{(od.get('made2',0)+od.get('made3',0))/(od.get('att2',0)+od.get('att3',0)):.0%}" if (od.get('att2',0)+od.get('att3',0)) else "—")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
               <td class="text-center" style="font-size:.82rem;background:#fff5f5">{(lambda od: f"{od.get('made2',0)+od.get('made3',0)}/{od.get('att2',0)+od.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
             </tr>""" for i,b in enumerate(BUCKETS))}
@@ -2406,14 +2406,14 @@ def sezon():
         obar = int(oa/max_att*80) if oa else 0
         return f"""<tr>
             <td class="fw-bold" style="font-size:.85rem">{bucket}</td>
-            <td style="font-size:.8rem;background:#f0fff4">{gm}/{ga}</td>
-            <td style="font-weight:700;color:#1a6b3c;background:#f0fff4">{ge}</td>
-            <td style="font-size:.75rem;color:#555;background:#f0fff4">{gm2}/{ga2} | {gm3}/{ga3}</td>
-            <td style="padding:6px 8px"><div style="height:8px;width:{gbar}px;background:#1a6b3c;border-radius:4px"></div></td>
-            <td style="padding:6px 8px"><div style="height:8px;width:{obar}px;background:#8b1a1a;border-radius:4px"></div></td>
-            <td style="font-size:.75rem;color:#555;background:#fff5f5">{om2}/{oa2} | {om3}/{oa3}</td>
-            <td style="font-weight:700;color:#8b1a1a;background:#fff5f5">{oe}</td>
-            <td style="font-size:.8rem;background:#fff5f5">{om}/{oa}</td>
+            <td style="font-size:.8rem;background:#f0fff4;text-align:center">{gm}/{ga}</td>
+            <td style="font-weight:700;color:#1a6b3c;background:#f0fff4;text-align:center">{ge}</td>
+            <td style="font-size:.75rem;color:#555;background:#f0fff4;text-align:center">{gm2}/{ga2} | {gm3}/{ga3}</td>
+            <td style="padding:6px 8px;background:#fff"><div style="height:8px;width:{gbar}px;background:#1a6b3c;border-radius:4px"></div></td>
+            <td style="padding:6px 8px;background:#fff"><div style="height:8px;width:{obar}px;background:#8b1a1a;border-radius:4px"></div></td>
+            <td style="font-size:.75rem;color:#555;background:#fff5f5;text-align:center">{om2}/{oa2} | {om3}/{oa3}</td>
+            <td style="font-weight:700;color:#8b1a1a;background:#fff5f5;text-align:center">{oe}</td>
+            <td style="font-size:.8rem;background:#fff5f5;text-align:center">{om}/{oa}</td>
         </tr>"""
 
     tim_rows = "".join(timing_row(b) for b in BUCKETS)
@@ -2424,7 +2424,7 @@ def sezon():
 
     content = f"""
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <div class="page-title mb-0">📊 Statystyki sezonu</div>
+  <div class="page-title mb-0">📊 Statystyki drużyny</div>
   <form method="GET" class="d-flex gap-2 align-items-center">
     <label style="font-size:.82rem;font-weight:600">Sezon:</label>
     <select name="sezon" class="form-select form-select-sm" style="width:120px" onchange="this.form.submit()">
@@ -2483,17 +2483,17 @@ def sezon():
     <table class="table table-hover mb-0">
       <thead>
         <tr>
-          <th rowspan="2" style="vertical-align:middle">Czas</th>
+          <th rowspan="2" style="vertical-align:middle;background:#1a2b4a;color:#fff">Czas</th>
           <th colspan="3" style="background:#e8f5e9;color:#1a6b3c;text-align:center;border-bottom:2px solid #1a6b3c">{gtk_name}</th>
-          <th colspan="2" style="text-align:center;border-bottom:2px solid #dee2e6"></th>
+          <th colspan="2" style="background:#fff;border-bottom:2px solid #dee2e6"></th>
           <th colspan="3" style="background:#ffebee;color:#8b1a1a;text-align:center;border-bottom:2px solid #8b1a1a">Przeciwnicy</th>
         </tr>
         <tr>
           <th style="background:#e8f5e9;color:#1a6b3c;text-align:center;font-size:.72rem">Celne/Próby</th>
           <th style="background:#e8f5e9;color:#1a6b3c;text-align:center;font-size:.72rem">Eff%</th>
           <th style="background:#e8f5e9;color:#1a6b3c;text-align:center;font-size:.72rem">2PT | 3PT</th>
-          <th style="text-align:center;font-size:.72rem;width:90px">{gtk_name}</th>
-          <th style="text-align:center;font-size:.72rem;width:90px">Opp</th>
+          <th style="background:#fff;text-align:center;font-size:.72rem;width:90px;color:#555">{gtk_name}</th>
+          <th style="background:#fff;text-align:center;font-size:.72rem;width:90px;color:#555">Przeciwnicy</th>
           <th style="background:#ffebee;color:#8b1a1a;text-align:center;font-size:.72rem">2PT | 3PT</th>
           <th style="background:#ffebee;color:#8b1a1a;text-align:center;font-size:.72rem">Eff%</th>
           <th style="background:#ffebee;color:#8b1a1a;text-align:center;font-size:.72rem">Celne/Próby</th>
