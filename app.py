@@ -1114,6 +1114,107 @@ def download_with_errors():
                 desc_cell.font = Font(color="B71C1C", bold=True, size=9)
                 desc_cell.fill = COMMENT_FILL
 
+        # ── Dodaj podsumowanie punktów per kwarta (prawa strona) ──────────────
+        HDR_BLUE  = PatternFill("solid", fgColor="1A2B4A")
+        HDR_WHITE = Font(color="FFFFFF", bold=True, size=9)
+        SUM_FILL  = PatternFill("solid", fgColor="E3F2FD")
+        SUM_FONT  = Font(bold=True, size=9, color="0C447C")
+        OK_FILL   = PatternFill("solid", fgColor="E8F5E9")
+        ERR_FILL  = PatternFill("solid", fgColor="FFEBEE")
+
+        meta = read_meta(wb)
+
+        for idx, sheet_name in enumerate(sheets_data):
+            if sheet_name not in wb.sheetnames: continue
+            ws = wb[sheet_name]
+            stats = parse_team_sheet(ws)
+
+            # Znajdź ostatni wiersz z danymi
+            last_row = 1
+            for r in ws.iter_rows(min_row=2, max_row=600, values_only=True):
+                if not any(v is not None for v in r[:4]): break
+                last_row += 1
+
+            # Kolumny podsumowania — zaczynamy od P (16)
+            COL_START = 17  # kolumna Q
+
+            # Nagłówki
+            for ci, lbl in enumerate(["KWARTA","PKT","2PM/A","3PM/A","FTM/A","BR","POSS"]):
+                c = ws.cell(1, COL_START + ci, lbl)
+                c.fill = HDR_BLUE; c.font = HDR_WHITE
+                c.alignment = Alignment(horizontal="center")
+                ws.column_dimensions[get_column_letter(COL_START + ci)].width = 9
+
+            ws.column_dimensions[get_column_letter(COL_START)].width = 8
+
+            # Dane per kwarta
+            total_pts = 0
+            for qi, qn in enumerate([1,2,3,4]):
+                qd = stats["quarter"].get(qn, {})
+                r = 2 + qi
+                pts_q = qd.get("pts",0)
+                total_pts += pts_q
+
+                vals = [
+                    f"{qn}Q",
+                    pts_q,
+                    f"{qd.get('p2m',0)}/{qd.get('p2a',0)}",
+                    f"{qd.get('p3m',0)}/{qd.get('p3a',0)}",
+                    f"{qd.get('ftm',0)}/{qd.get('fta',0)}",
+                    qd.get("br",0),
+                    qd.get("poss",0),
+                ]
+                for ci, v in enumerate(vals):
+                    c = ws.cell(r, COL_START + ci, v)
+                    c.fill = SUM_FILL; c.font = Font(size=9)
+                    c.alignment = Alignment(horizontal="center")
+
+            # Wiersz SUMA
+            r_sum = 6
+            ws.cell(r_sum, COL_START, "SUMA").fill = PatternFill("solid", fgColor="1A2B4A")
+            ws.cell(r_sum, COL_START).font = Font(color="FFFFFF", bold=True, size=9)
+            ws.cell(r_sum, COL_START).alignment = Alignment(horizontal="center")
+
+            suma_all = suma_quarters(stats)
+            suma_vals = [
+                total_pts,
+                f"{suma_all.get('p2m',0)}/{suma_all.get('p2a',0)}",
+                f"{suma_all.get('p3m',0)}/{suma_all.get('p3a',0)}",
+                f"{suma_all.get('ftm',0)}/{suma_all.get('fta',0)}",
+                suma_all.get("br",0),
+                suma_all.get("poss",0),
+            ]
+            for ci, v in enumerate(suma_vals):
+                c = ws.cell(r_sum, COL_START + 1 + ci, v)
+                c.font = Font(bold=True, size=9); c.alignment = Alignment(horizontal="center")
+                c.fill = PatternFill("solid", fgColor="BBDEFB")
+
+            # Porównanie z META
+            meta_key = "wynik_a" if idx == 0 else "wynik_b"
+            try:
+                meta_pts = int(meta.get(meta_key,"")) if meta.get(meta_key) else None
+            except: meta_pts = None
+
+            r_meta = 8
+            if meta_pts is not None:
+                ws.cell(r_meta, COL_START, "META").fill = PatternFill("solid", fgColor="37474F")
+                ws.cell(r_meta, COL_START).font = Font(color="FFFFFF", bold=True, size=9)
+                ws.cell(r_meta, COL_START).alignment = Alignment(horizontal="center")
+
+                match = meta_pts == total_pts
+                fill = OK_FILL if match else ERR_FILL
+                font_col = "1B5E20" if match else "B71C1C"
+
+                ws.cell(r_meta, COL_START+1, meta_pts).fill = fill
+                ws.cell(r_meta, COL_START+1).font = Font(bold=True, size=9, color=font_col)
+                ws.cell(r_meta, COL_START+1).alignment = Alignment(horizontal="center")
+
+                ws.cell(r_meta, COL_START+2, "✓ OK" if match else f"❌ RÓŻNICA: {total_pts-meta_pts:+d}")
+                ws.cell(r_meta, COL_START+2).fill = fill
+                ws.cell(r_meta, COL_START+2).font = Font(bold=True, size=9, color=font_col)
+                ws.merge_cells(start_row=r_meta, start_column=COL_START+2,
+                               end_row=r_meta, end_column=COL_START+5)
+
         # ── Dodaj legendę na początku każdego arkusza ──────────────────────
         for sheet_name in sheets_data:
             if sheet_name not in wb.sheetnames: continue
