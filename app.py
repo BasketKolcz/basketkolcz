@@ -39,10 +39,13 @@ def init_db():
         sezon VARCHAR(20) NOT NULL DEFAULT '2024/25',
         data_meczu DATE,
         przeciwnik VARCHAR(100) NOT NULL,
+        nazwa_gtk VARCHAR(100) DEFAULT '',
         wynik_gtk INTEGER DEFAULT 0,
         wynik_opp INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW()
     );
+
+    ALTER TABLE matches ADD COLUMN IF NOT EXISTS nazwa_gtk VARCHAR(100) DEFAULT '';
 
     CREATE TABLE IF NOT EXISTS match_stats (
         id SERIAL PRIMARY KEY,
@@ -296,7 +299,7 @@ def calc_kpi(d):
         "ft_pct":pct(ftm,fta),
     }
 
-def save_match_to_db(przeciwnik, sezon, data_meczu, stats_gtk, stats_opp):
+def save_match_to_db(przeciwnik, nazwa_gtk, sezon, data_meczu, stats_gtk, stats_opp):
     db = get_db()
     cur = db.cursor()
     suma_gtk = suma_quarters(stats_gtk)
@@ -304,9 +307,9 @@ def save_match_to_db(przeciwnik, sezon, data_meczu, stats_gtk, stats_opp):
 
     # Wstaw mecz
     cur.execute("""
-        INSERT INTO matches (sezon, data_meczu, przeciwnik, wynik_gtk, wynik_opp)
-        VALUES (%s, %s, %s, %s, %s) RETURNING id
-    """, (sezon, data_meczu, przeciwnik, suma_gtk.get("pts",0), suma_opp.get("pts",0)))
+        INSERT INTO matches (sezon, data_meczu, przeciwnik, nazwa_gtk, wynik_gtk, wynik_opp)
+        VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+    """, (sezon, data_meczu, przeciwnik, nazwa_gtk, suma_gtk.get("pts",0), suma_opp.get("pts",0)))
     match_id = cur.fetchone()["id"]
 
     # Statystyki per kwarta
@@ -939,13 +942,21 @@ def _do_save(wb, name_gtk, name_opp, sezon, data_meczu):
     try:
         init_db()
     except: pass
+
+    # Czytaj nazwy z META jeśli dostępne, fallback do nazw arkuszy
+    meta = read_meta(wb)
+    display_gtk = meta.get("nazwa_a","") or name_gtk
+    display_opp = meta.get("nazwa_b","") or name_opp
+    # Pomiń domyślne placeholdery
+    if display_gtk in ("TWOJA_DRUZYNA","TWOJA_DRUŻYNA","-",""): display_gtk = name_gtk
+    if display_opp in ("RYWAL","-",""): display_opp = name_opp
+
     stats_gtk = parse_team_sheet(wb[name_gtk])
     stats_opp = parse_team_sheet(wb[name_opp])
-    match_id  = save_match_to_db(name_opp, sezon, data_meczu, stats_gtk, stats_opp)
-    # Wyczyść całą sesję — zostaw tylko match_id
+    match_id  = save_match_to_db(display_opp, display_gtk, sezon, data_meczu, stats_gtk, stats_opp)
     session.clear()
     session["last_match_id"] = match_id
-    flash(f"✓ Mecz {name_gtk} vs {name_opp} zapisany pomyślnie!","success")
+    flash(f"✓ Mecz {display_gtk} vs {display_opp} zapisany pomyślnie!","success")
     return redirect(url_for("mecz", match_id=match_id))
 
 
@@ -1463,7 +1474,7 @@ def mecz(match_id):
     m = cur.fetchone()
     if not m: flash("Mecz nie istnieje","error"); return redirect(url_for("historia"))
 
-    gtk_name = get_setting("gtk_name") or "GTK"
+    gtk_name = (m.get("nazwa_gtk","") or "").strip() or get_setting("gtk_name") or "GTK"
     name_opp = m["przeciwnik"]
 
     cur.execute("SELECT * FROM match_stats WHERE match_id=%s ORDER BY kwarta", (match_id,))
@@ -1733,25 +1744,36 @@ def mecz(match_id):
       </div>
       <div class="table-responsive">
         <table class="table table-hover mb-0">
-          <thead><tr>
-            <th>Czas</th>
-            <th class="text-center" style="color:#1a6b3c">Celne/Próby</th>
-            <th class="text-center" style="color:#1a6b3c">Eff%</th>
-            <th style="width:100px">{gtk_name}</th>
-            <th style="width:100px">{name_opp}</th>
-            <th class="text-center" style="color:#8b1a1a">Eff%</th>
-            <th class="text-center" style="color:#8b1a1a">Celne/Próby</th>
-          </tr></thead>
+          <thead>
+            <tr>
+              <th rowspan="2" style="background:#f8f9fa;color:#1a2b4a;border-bottom:2px solid #dee2e6;vertical-align:middle">Czas</th>
+              <th colspan="3" style="background:#e8f5e9;color:#1a6b3c;text-align:center;border-bottom:2px solid #1a6b3c">{gtk_name}</th>
+              <th colspan="2" style="background:#f8f9fa;color:#555;text-align:center;border-bottom:2px solid #dee2e6">Pasek</th>
+              <th colspan="3" style="background:#ffebee;color:#8b1a1a;text-align:center;border-bottom:2px solid #8b1a1a">{name_opp}</th>
+            </tr>
+            <tr>
+              <th style="background:#e8f5e9;color:#1a6b3c;text-align:center;font-size:.72rem">Celne/Próby</th>
+              <th style="background:#e8f5e9;color:#1a6b3c;text-align:center;font-size:.72rem">Eff%</th>
+              <th style="background:#e8f5e9;color:#1a6b3c;text-align:center;font-size:.72rem">2PT | 3PT</th>
+              <th style="background:#f8f9fa;color:#555;text-align:center;font-size:.72rem;width:90px">{gtk_name}</th>
+              <th style="background:#f8f9fa;color:#555;text-align:center;font-size:.72rem;width:90px">{name_opp}</th>
+              <th style="background:#ffebee;color:#8b1a1a;text-align:center;font-size:.72rem">2PT | 3PT</th>
+              <th style="background:#ffebee;color:#8b1a1a;text-align:center;font-size:.72rem">Eff%</th>
+              <th style="background:#ffebee;color:#8b1a1a;text-align:center;font-size:.72rem">Celne/Próby</th>
+            </tr>
+          </thead>
           <tbody>
-            {''.join(f"""<tr>
+            {''.join(f"""<tr style="background:{'#f9f9f9' if i%2==0 else '#fff'}">
               <td class="fw-bold" style="font-size:.82rem">{b}</td>
-              <td class="text-center" style="font-size:.82rem">{(lambda gd: f"{gd.get('made2',0)+gd.get('made3',0)}/{gd.get('att2',0)+gd.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
-              <td class="text-center" style="font-size:.82rem;font-weight:600;color:#1a6b3c">{(lambda gd: f"{(gd.get('made2',0)+gd.get('made3',0))/(gd.get('att2',0)+gd.get('att3',0)):.0%}" if (gd.get('att2',0)+gd.get('att3',0)) else "-")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
-              <td><div style="height:8px;width:{int((next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}).get('att3',0))/max(max((next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==bb),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==bb),{}).get('att3',0)) for bb in BUCKETS),1)*80)}px;background:#1a6b3c;border-radius:4px"></div></td>
-              <td><div style="height:8px;width:{int((next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}).get('att3',0))/max(max((next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==bb),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==bb),{}).get('att3',0)) for bb in BUCKETS),1)*80)}px;background:#8b1a1a;border-radius:4px"></div></td>
-              <td class="text-center" style="font-size:.82rem;font-weight:600;color:#8b1a1a">{(lambda od: f"{(od.get('made2',0)+od.get('made3',0))/(od.get('att2',0)+od.get('att3',0)):.0%}" if (od.get('att2',0)+od.get('att3',0)) else "-")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
-              <td class="text-center" style="font-size:.82rem">{(lambda od: f"{od.get('made2',0)+od.get('made3',0)}/{od.get('att2',0)+od.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
-            </tr>""" for b in BUCKETS)}
+              <td class="text-center" style="font-size:.82rem;background:#f0fff4">{(lambda gd: f"{gd.get('made2',0)+gd.get('made3',0)}/{gd.get('att2',0)+gd.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
+              <td class="text-center" style="font-size:.85rem;font-weight:700;color:#1a6b3c;background:#f0fff4">{(lambda gd: f"{(gd.get('made2',0)+gd.get('made3',0))/(gd.get('att2',0)+gd.get('att3',0)):.0%}" if (gd.get('att2',0)+gd.get('att3',0)) else "—")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
+              <td style="font-size:.75rem;color:#555;background:#f0fff4">{(lambda gd: f"{gd.get('made2',0)}/{gd.get('att2',0)} | {gd.get('made3',0)}/{gd.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
+              <td style="padding:6px 8px"><div style="height:8px;width:{int((next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}).get('att3',0))/max(max((next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==bb),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==bb),{}).get('att3',0)) for bb in BUCKETS),1)*80)}px;background:#1a6b3c;border-radius:4px"></div></td>
+              <td style="padding:6px 8px"><div style="height:8px;width:{int((next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}).get('att3',0))/max(max((next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==bb),{}).get('att2',0)+next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==bb),{}).get('att3',0)) for bb in BUCKETS),1)*80)}px;background:#8b1a1a;border-radius:4px"></div></td>
+              <td style="font-size:.75rem;color:#555;background:#fff5f5">{(lambda od: f"{od.get('made2',0)}/{od.get('att2',0)} | {od.get('made3',0)}/{od.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
+              <td class="text-center" style="font-size:.85rem;font-weight:700;color:#8b1a1a;background:#fff5f5">{(lambda od: f"{(od.get('made2',0)+od.get('made3',0))/(od.get('att2',0)+od.get('att3',0)):.0%}" if (od.get('att2',0)+od.get('att3',0)) else "—")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
+              <td class="text-center" style="font-size:.82rem;background:#fff5f5">{(lambda od: f"{od.get('made2',0)+od.get('made3',0)}/{od.get('att2',0)+od.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='opp' and r['bucket']==b),{}))}</td>
+            </tr>""" for i,b in enumerate(BUCKETS))}
           </tbody>
         </table>
       </div>
@@ -2303,7 +2325,7 @@ def export_match_xlsx(match_id):
     m = cur.fetchone()
     if not m: return redirect(url_for("historia"))
 
-    gtk_name = get_setting("gtk_name") or "GTK"
+    gtk_name = (m.get("nazwa_gtk","") or "").strip() or get_setting("gtk_name") or "GTK"
     name_opp = m["przeciwnik"]
 
     cur.execute("SELECT * FROM match_stats WHERE match_id=%s ORDER BY kwarta", (match_id,))
