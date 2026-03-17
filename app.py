@@ -251,38 +251,38 @@ def parse_team_sheet(ws):
             if code in ACTION_2PM:
                 q["p2m"]+=1; q["p2a"]+=1; pts=2
                 stats["timing"][bucket]["2PT"]["made"]+=1
-                if finisher:
+                if finisher is not None:
                     stats["players"][finisher]["p2m"]+=1; stats["players"][finisher]["p2a"]+=1
                     stats["players"][finisher]["finishes"]+=1
-                    if assister: stats["players"][assister]["ast"]+=1
+                    if assister is not None: stats["players"][assister]["ast"]+=1
             elif code in ("0/2","0/2D"):
                 q["p2a"]+=1
                 stats["timing"][bucket]["2PT"]["miss"]+=1
-                if finisher: stats["players"][finisher]["p2a"]+=1; stats["players"][finisher]["finishes"]+=1
-                if orebler: stats["players"][orebler]["oreb"]+=1
+                if finisher is not None: stats["players"][finisher]["p2a"]+=1; stats["players"][finisher]["finishes"]+=1
+                if orebler is not None: stats["players"][orebler]["oreb"]+=1
             elif code in ACTION_3PM:
                 q["p3m"]+=1; q["p3a"]+=1; pts=3
                 stats["timing"][bucket]["3PT"]["made"]+=1
-                if finisher:
+                if finisher is not None:
                     stats["players"][finisher]["p3m"]+=1; stats["players"][finisher]["p3a"]+=1
                     stats["players"][finisher]["finishes"]+=1
-                    if assister: stats["players"][assister]["ast"]+=1
+                    if assister is not None: stats["players"][assister]["ast"]+=1
             elif code == "0/3":
                 q["p3a"]+=1
                 stats["timing"][bucket]["3PT"]["miss"]+=1
-                if finisher: stats["players"][finisher]["p3a"]+=1; stats["players"][finisher]["finishes"]+=1
-                if orebler: stats["players"][orebler]["oreb"]+=1
+                if finisher is not None: stats["players"][finisher]["p3a"]+=1; stats["players"][finisher]["finishes"]+=1
+                if orebler is not None: stats["players"][orebler]["oreb"]+=1
             elif code in ACTION_BR:
                 q["br"]+=1
-                if finisher: stats["players"][finisher]["br"]+=1
-                if drebler: stats["players"][drebler]["dreb"]+=1
+                if finisher is not None: stats["players"][finisher]["br"]+=1
+                if drebler is not None: stats["players"][drebler]["dreb"]+=1
             elif code in ACTION_F:
                 q["fd"]+=1
 
             ftm, fta = extract_ft(code)
             if fta > 0:
                 q["ftm"]+=ftm; q["fta"]+=fta; pts+=ftm
-                if finisher:
+                if finisher is not None:
                     stats["players"][finisher]["ftm"]+=ftm; stats["players"][finisher]["fta"]+=fta
                     stats["players"][finisher]["fd"]+=1
 
@@ -1775,6 +1775,16 @@ def mecz(match_id):
 
     cur.execute("SELECT * FROM timing_stats WHERE match_id=%s", (match_id,))
     all_timing = cur.fetchall()
+
+    # Mapa roster_id → "Nazwisko I." dla GTK
+    try:
+        cur.execute("""SELECT ps.id as ps_id, r.imie, r.nazwisko
+                       FROM player_stats ps
+                       JOIN roster r ON ps.roster_id = r.id
+                       WHERE ps.match_id=%s AND ps.druzyna='gtk'""", (match_id,))
+        roster_map = {row["ps_id"]: f"{row['nazwisko']} {row['imie'][0]}." for row in cur.fetchall()}
+    except:
+        roster_map = {}
     cur.close()
 
     def build_suma(druzyna):
@@ -1848,8 +1858,13 @@ def mecz(match_id):
             pm2 = pd.get("p2m",0); pm3 = pd.get("p3m",0)
             efg = f"{(pm2+1.5*pm3)/fga:.0%}" if fga else "-"
             ts  = f"{pd.get('pts',0)/(2*(fga+0.44*fta)):.0%}" if (fga+fta) else "-"
+            # Pokaż nazwisko jeśli przypisany (tylko GTK), inaczej numer
+            if druzyna == "gtk" and pd["id"] in roster_map:
+                id_cell = f'<td class="fw-bold">#{pd["nr"]} {roster_map[pd["id"]]}</td>'
+            else:
+                id_cell = f'<td class="fw-bold">#{pd["nr"]}</td>'
             rows += f"""<tr>
-                <td class="fw-bold">#{pd['nr']}</td>
+                {id_cell}
                 <td class="fw-bold" style="color:#1a2b4a">{pd.get('pts',0)}</td>
                 <td>{pm2}/{pd.get('p2a',0)}</td>
                 <td>{pm3}/{pd.get('p3a',0)}</td>
@@ -1859,8 +1874,9 @@ def mecz(match_id):
                 <td>{pd.get('dreb',0)}</td><td>{pd.get('br',0)}</td>
                 <td>{pd.get('finishes',0)}</td>
             </tr>"""
+        hdr_id = "Zawodnik" if druzyna == "gtk" and roster_map else "#"
         return f"""<div class="table-responsive"><table class="table table-hover mb-0">
-            <thead><tr><th>#</th><th>PTS</th><th>2PM/A</th><th>3PM/A</th><th>FTM/A</th><th>eFG%</th><th>TS%</th><th>AST</th><th>OREB</th><th>DREB</th><th>BR</th><th>FIN</th></tr></thead>
+            <thead><tr><th>{hdr_id}</th><th>PTS</th><th>2PM/A</th><th>3PM/A</th><th>FTM/A</th><th>eFG%</th><th>TS%</th><th>AST</th><th>OREB</th><th>DREB</th><th>BR</th><th>FIN</th></tr></thead>
             <tbody>{rows}</tbody></table></div>"""
 
     # Shot timing
@@ -2540,26 +2556,31 @@ def zawodnicy():
         n = p.get("mecze",1); bg = "background:#f8f9ff" if i%2==0 else ""
         nazwa = p.get('nazwa','?')
         numery = p.get('numery','')
-        # Ostrzeżenie jeśli ma nieprzypisane mecze
-        warn = ' <span title="Część meczów nie jest przypisana do zawodnika" style="color:#f9a825;font-size:.75rem">⚠</span>' if p.get('ma_nieprzypisane') else ''
+        warn = ' <span title="Część meczów nie jest przypisana" style="color:#f9a825;font-size:.75rem">⚠</span>' if p.get('ma_nieprzypisane') else ''
+        ppg = f"{p.get('pts',0)/n:.1f}"
         rows += f"""<tr style="{bg}">
             <td class="fw-bold">{nazwa}{warn}</td>
-            <td style="font-size:.75rem;color:#888">#{numery}</td>
-            <td class="fw-bold" style="color:#1a2b4a;font-size:.95rem">{p.get('pts',0)}</td>
-            <td style="font-size:.78rem;color:#888">{p.get('pts',0)/n:.1f}</td>
+            <td style="font-size:.75rem;color:#888">{numery}</td>
+            <td>{ppg}</td>
             <td>{pm2}/{p.get('p2a',0)}</td>
             <td>{pm3}/{p.get('p3a',0)}</td>
             <td>{ftm}/{fta}</td>
-            <td><b>{efg}</b></td><td>{ts}</td>
+            <td><b>{efg}</b></td>
+            <td>{ts}</td>
             <td>{p.get('ast',0)}</td>
-            <td>{p.get('oreb',0)}</td><td>{p.get('dreb',0)}</td>
+            <td>{p.get('oreb',0)}</td>
+            <td>{p.get('dreb',0)}</td>
             <td>{p.get('br',0)}</td>
             <td>{p.get('finishes',0)}</td>
+            <td class="fw-bold" style="color:#1a2b4a">{p.get('pts',0)}</td>
             <td style="font-size:.78rem;color:#888">{n}</td>
         </tr>"""
 
     season_opts = "".join([f'<option value="{s}" {"selected" if s==sezon_filter else ""}>{s}</option>' for s in sezony])
     gtk_name = get_setting("gtk_name") or "GTK"
+
+    def th(label, col):
+        return f'<th style="cursor:pointer;white-space:nowrap;user-select:none" onclick="sortZaw({col})"><span id="thz_{col}">{label}</span></th>'
 
     content = f"""
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -2574,23 +2595,65 @@ def zawodnicy():
   <div class="card-body p-2">
     <p style="font-size:.78rem;color:#aaa">Suma wszystkich meczów sezonu {sezon_filter} ({n_matches} meczów)</p>
     <div class="table-responsive">
-      <table class="table table-hover mb-0">
+      <table class="table table-hover mb-0" id="zawTable">
         <thead><tr>
-          <th>Zawodnik</th><th style="font-size:.72rem">#</th>
-          <th>PTS łącznie</th><th>PPG</th>
-          <th>2PM/A</th><th>3PM/A</th><th>FTM/A</th>
-          <th>eFG%</th><th>TS%</th><th>AST</th>
-          <th>OREB</th><th>DREB</th><th>BR</th><th>FIN</th><th>Mecze</th>
+          {th('Zawodnik',0)}
+          {th('Nr',1)}
+          {th('PPG',2)}
+          {th('2PM/A',3)}
+          {th('3PM/A',4)}
+          {th('FTM/A',5)}
+          {th('eFG%',6)}
+          {th('TS%',7)}
+          {th('AST',8)}
+          {th('OREB',9)}
+          {th('DREB',10)}
+          {th('BR',11)}
+          {th('FIN',12)}
+          {th('PTS',13)}
+          {th('Mecze',14)}
         </tr></thead>
-        <tbody>
-          {rows if rows else '<tr><td colspan="14" class="text-center text-muted py-4">Brak danych zawodników</td></tr>'}
+        <tbody id="zawBody">
+          {rows if rows else '<tr><td colspan="15" class="text-center text-muted py-4">Brak danych zawodników</td></tr>'}
         </tbody>
       </table>
     </div>
   </div>
 </div>"""
 
-    return render_template_string(base(content, active="players"))
+    scripts = """<script>
+let _zawDir = {};
+function sortZaw(col) {
+    const tbody = document.getElementById('zawBody');
+    if(!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    _zawDir[col] = !_zawDir[col];
+
+    // Aktualizuj strzałki
+    document.querySelectorAll('[id^="thz_"]').forEach(el => {
+        el.textContent = el.textContent.replace(/ [↑↓]$/,'');
+    });
+    const thEl = document.getElementById('thz_' + col);
+    if(thEl) thEl.textContent += _zawDir[col] ? ' ↓' : ' ↑';
+
+    rows.sort((a, b) => {
+        const av = a.cells[col]?.textContent.trim() || '';
+        const bv = b.cells[col]?.textContent.trim() || '';
+        // Liczba lub tekst
+        const an = parseFloat(av.replace('%','').replace('/','.')); 
+        const bn = parseFloat(bv.replace('%','').replace('/','.')); 
+        if(!isNaN(an) && !isNaN(bn)) {
+            return _zawDir[col] ? bn - an : an - bn;
+        }
+        return _zawDir[col] ? bv.localeCompare(av,'pl') : av.localeCompare(bv,'pl');
+    });
+    rows.forEach(r => tbody.appendChild(r));
+}
+// Domyślnie sortuj po PPG malejąco
+window.addEventListener('DOMContentLoaded', () => { _zawDir[2]=true; sortZaw(2); });
+</script>"""
+
+    return render_template_string(base(content, scripts, active="players"))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # USTAWIENIA
@@ -4349,7 +4412,7 @@ def mecz_edytuj(match_id):
 
     cur.execute("""SELECT r.id, r.imie, r.nazwisko, r.pseudonim
                    FROM roster r WHERE r.aktywny=TRUE
-                   ORDER BY r.nazwisko, r.imie""")
+                   ORDER BY r.nazwisko ASC, r.imie ASC""")
     roster_list = list(cur.fetchall())
 
     if request.method == "POST":
@@ -4358,7 +4421,7 @@ def mecz_edytuj(match_id):
             rid = request.form.get(f"roster_{p['id']}","")
             rid_val = int(rid) if rid and rid.isdigit() else None
             cur.execute("UPDATE player_stats SET roster_id=%s WHERE id=%s", (rid_val, p['id']))
-            if rid_val and p['nr']:
+            if rid_val and p['nr'] is not None:
                 try:
                     cur.execute("""INSERT INTO player_aliases (roster_id,nr,sezon)
                                    VALUES (%s,%s,%s) ON CONFLICT DO NOTHING""",
@@ -4374,7 +4437,7 @@ def mecz_edytuj(match_id):
     import json as _json
     roster_json = _json.dumps([
         {"id": r["id"],
-         "name": f"{r['imie']} {r['nazwisko']}" + (f" ({r['pseudonim']})" if r['pseudonim'] else "")}
+         "name": f"{r['nazwisko']} {r['imie']}" + (f" ({r['pseudonim']})" if r['pseudonim'] else "")}
         for r in roster_list
     ])
 
