@@ -2451,32 +2451,50 @@ def zawodnicy():
     n_matches = cur.fetchone()["cnt"]
 
     # Agreguj po roster_id jeśli przypisany, inaczej po numerze
-    cur.execute("""
-        SELECT
-            COALESCE(r.id::text, 'nr_'||ps.nr::text) as grp_id,
-            CASE WHEN r.id IS NOT NULL
-                 THEN r.imie || ' ' || r.nazwisko
-                 ELSE '#' || ps.nr::text
-            END as nazwa,
-            CASE WHEN r.id IS NOT NULL
-                 THEN COALESCE(string_agg(DISTINCT ps.nr::text, ', ' ORDER BY ps.nr::text), '')
-                 ELSE ps.nr::text
-            END as numery,
-            SUM(ps.pts) as pts, SUM(ps.p2m) as p2m, SUM(ps.p2a) as p2a,
-            SUM(ps.p3m) as p3m, SUM(ps.p3a) as p3a,
-            SUM(ps.ftm) as ftm, SUM(ps.fta) as fta,
-            SUM(ps.ast) as ast, SUM(ps.oreb) as oreb, SUM(ps.dreb) as dreb,
-            SUM(ps.br) as br, SUM(ps.fd) as fd, SUM(ps.finishes) as finishes,
-            COUNT(DISTINCT ps.match_id) as mecze,
-            BOOL_OR(ps.roster_id IS NULL) as ma_nieprzypisane
-        FROM player_stats ps
-        JOIN matches m ON ps.match_id=m.id
-        LEFT JOIN roster r ON ps.roster_id=r.id
-        WHERE m.sezon=%s AND ps.druzyna='gtk'
-        GROUP BY grp_id, nazwa, CASE WHEN r.id IS NOT NULL THEN ps.nr::text ELSE ps.nr::text END,
-                 r.id, r.imie, r.nazwisko, ps.nr
-        ORDER BY pts DESC
-    """, (sezon_filter,))
+    try:
+        cur.execute("""
+            SELECT
+                COALESCE(r.id::text, 'nr_'||ps.nr::text) as grp_id,
+                CASE WHEN r.id IS NOT NULL
+                     THEN r.imie || ' ' || r.nazwisko
+                     ELSE '#' || ps.nr::text
+                END as nazwa,
+                CASE WHEN r.id IS NOT NULL
+                     THEN COALESCE(string_agg(DISTINCT ps.nr::text, ', '), '')
+                     ELSE ps.nr::text
+                END as numery,
+                SUM(ps.pts) as pts, SUM(ps.p2m) as p2m, SUM(ps.p2a) as p2a,
+                SUM(ps.p3m) as p3m, SUM(ps.p3a) as p3a,
+                SUM(ps.ftm) as ftm, SUM(ps.fta) as fta,
+                SUM(ps.ast) as ast, SUM(ps.oreb) as oreb, SUM(ps.dreb) as dreb,
+                SUM(ps.br) as br, SUM(ps.fd) as fd, SUM(ps.finishes) as finishes,
+                COUNT(DISTINCT ps.match_id) as mecze,
+                BOOL_OR(ps.roster_id IS NULL) as ma_nieprzypisane
+            FROM player_stats ps
+            JOIN matches m ON ps.match_id=m.id
+            LEFT JOIN roster r ON ps.roster_id=r.id
+            WHERE m.sezon=%s AND ps.druzyna='gtk'
+            GROUP BY r.id, r.imie, r.nazwisko, ps.nr
+            ORDER BY pts DESC
+        """, (sezon_filter,))
+    except:
+        # Fallback — prosta agregacja po numerze
+        cur.execute("""
+            SELECT ps.nr::text as grp_id,
+                   '#'||ps.nr::text as nazwa,
+                   ps.nr::text as numery,
+                   SUM(ps.pts) as pts, SUM(ps.p2m) as p2m, SUM(ps.p2a) as p2a,
+                   SUM(ps.p3m) as p3m, SUM(ps.p3a) as p3a,
+                   SUM(ps.ftm) as ftm, SUM(ps.fta) as fta,
+                   SUM(ps.ast) as ast, SUM(ps.oreb) as oreb, SUM(ps.dreb) as dreb,
+                   SUM(ps.br) as br, SUM(ps.fd) as fd, SUM(ps.finishes) as finishes,
+                   COUNT(DISTINCT ps.match_id) as mecze,
+                   TRUE as ma_nieprzypisane
+            FROM player_stats ps
+            JOIN matches m ON ps.match_id=m.id
+            WHERE m.sezon=%s AND ps.druzyna='gtk'
+            GROUP BY ps.nr ORDER BY pts DESC
+        """, (sezon_filter,))
     players = cur.fetchall()
     cur.close()
 
@@ -3111,10 +3129,7 @@ def roster():
     db = get_db(); cur = db.cursor()
     cur.execute("""
         SELECT r.id, r.imie, r.nazwisko, r.pseudonim, r.aktywny,
-               COALESCE(
-                 string_agg(DISTINCT pa.nr::text || CASE WHEN pa.sezon!='' THEN ' ('||pa.sezon||')' ELSE '' END, ', '
-                 ORDER BY pa.nr::text || CASE WHEN pa.sezon!='' THEN ' ('||pa.sezon||')' ELSE '' END), '—'
-               ) as numery
+               COALESCE(string_agg(DISTINCT pa.nr::text, ', '), '—') as numery
         FROM roster r
         LEFT JOIN player_aliases pa ON pa.roster_id = r.id
         GROUP BY r.id, r.imie, r.nazwisko, r.pseudonim, r.aktywny
@@ -3294,7 +3309,13 @@ def mecz_edytuj(match_id):
     players = list(cur.fetchall())
 
     # Pobierz roster
-    cur.execute("SELECT r.id, r.imie, r.nazwisko, r.pseudonim, COALESCE(string_agg(pa.nr::text,','),'') as numery FROM roster r LEFT JOIN player_aliases pa ON pa.roster_id=r.id WHERE r.aktywny=TRUE GROUP BY r.id,r.imie,r.nazwisko,r.pseudonim ORDER BY r.nazwisko,r.imie")
+    cur.execute("""SELECT r.id, r.imie, r.nazwisko, r.pseudonim,
+                   COALESCE(string_agg(DISTINCT pa.nr::text, ','), '') as numery
+                   FROM roster r
+                   LEFT JOIN player_aliases pa ON pa.roster_id=r.id
+                   WHERE r.aktywny=TRUE
+                   GROUP BY r.id,r.imie,r.nazwisko,r.pseudonim
+                   ORDER BY r.nazwisko,r.imie""")
     roster_list = list(cur.fetchall())
 
     if request.method == "POST":
