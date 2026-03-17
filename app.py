@@ -2498,7 +2498,7 @@ def zawodnicy():
     cur.execute("SELECT COUNT(*) as cnt FROM matches WHERE sezon=%s", (sezon_filter,))
     n_matches = cur.fetchone()["cnt"]
 
-    # Agreguj TYLKO po roster_id — nieprzypisani pokazani osobno jako "— nieprzypisany #nr"
+    # Agreguj TYLKO po roster_id — nieprzypisani osobno per numer
     try:
         cur.execute("""
             SELECT
@@ -2518,7 +2518,8 @@ def zawodnicy():
             JOIN matches m ON ps.match_id=m.id
             LEFT JOIN roster r ON ps.roster_id=r.id
             WHERE m.sezon=%s AND ps.druzyna='gtk'
-            GROUP BY r.id, r.imie, r.nazwisko, ps.nr
+            GROUP BY r.id, r.imie, r.nazwisko,
+                     CASE WHEN r.id IS NOT NULL THEN NULL ELSE ps.nr END
             ORDER BY ma_nieprzypisane ASC, pts DESC
         """, (sezon_filter,))
     except:
