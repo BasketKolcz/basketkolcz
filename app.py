@@ -357,53 +357,205 @@ def save_match_to_db(przeciwnik, sezon, data_meczu, stats_gtk, stats_opp):
 
 CSS = """
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-:root{--gtk:#1a6b3c;--opp:#8b1a1a;--navy:#1a2b4a}
-body{background:#f0f2f7;font-family:'Segoe UI',Arial,sans-serif;font-size:.9rem}
+/* ── ZMIENNE ── */
+:root{
+  --navy:#1a2b4a; --navy2:#2e5090;
+  --gtk:#1a6b3c;  --gtk-light:#e8f5e9;
+  --opp:#8b1a1a;  --opp-light:#ffebee;
+  --gold:#EF9F27;
+  --bg:#f0f2f7;
+  --card:#fff;
+  --radius:12px;
+  --shadow:0 1px 6px rgba(0,0,0,.08);
+}
 
-/* SIDEBAR */
-.sidebar{position:fixed;top:0;left:0;height:100vh;width:240px;background:#1a2b4a;z-index:1000;display:flex;flex-direction:column;overflow-y:auto;transition:.3s}
-.sidebar-logo{padding:1.25rem 1rem;border-bottom:1px solid #ffffff22}
-.sidebar-logo .brand{font-size:1.1rem;font-weight:700;color:#fff}
-.sidebar-logo .brand span{color:#EF9F27}
-.sidebar-logo .sub{font-size:.7rem;color:#ffffff66;margin-top:2px}
-.nav-section{padding:.5rem 1rem .25rem;font-size:.65rem;text-transform:uppercase;letter-spacing:1px;color:#ffffff44;font-weight:700}
-.nav-item-link{display:flex;align-items:center;gap:.65rem;padding:.6rem 1rem;color:#ffffffbb;text-decoration:none;font-size:.85rem;border-radius:6px;margin:1px 8px;transition:.15s}
-.nav-item-link:hover{background:#ffffff15;color:#fff}
-.nav-item-link.active{background:#EF9F2722;color:#EF9F27;font-weight:600}
-.nav-item-link .icon{width:18px;text-align:center;font-size:.9rem}
-.nav-season{margin:0 8px 8px;padding:.5rem .75rem;background:#ffffff0f;border-radius:8px;font-size:.75rem;color:#ffffff88}
-.nav-season strong{color:#EF9F27;display:block;font-size:.8rem;margin-bottom:2px}
+/* ── RESET ── */
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:'Segoe UI',system-ui,sans-serif;font-size:.9rem;color:#222}
 
-/* MAIN */
-.main-content{margin-left:240px;min-height:100vh;padding:1.5rem}
+/* ══════════════════════════════════════════
+   SIDEBAR (desktop)
+══════════════════════════════════════════ */
+.sidebar{
+  position:fixed;top:0;left:0;height:100vh;width:240px;
+  background:var(--navy);z-index:1000;
+  display:flex;flex-direction:column;
+  overflow-y:auto;overflow-x:hidden;
+  transition:transform .3s ease;
+}
+.sidebar-logo{
+  padding:1.1rem 1rem .9rem;
+  border-bottom:1px solid #ffffff18;
+  flex-shrink:0;
+}
+.sidebar-logo .brand{font-size:1.05rem;font-weight:700;color:#fff;letter-spacing:.3px}
+.sidebar-logo .brand span{color:var(--gold)}
+.sidebar-logo .sub{font-size:.68rem;color:#ffffff55;margin-top:2px}
+.nav-season{
+  margin:.6rem .6rem .3rem;
+  padding:.5rem .7rem;
+  background:#ffffff0d;
+  border-radius:8px;
+  font-size:.73rem;color:#ffffff77;
+}
+.nav-season strong{color:var(--gold);display:block;font-size:.8rem;margin-bottom:1px}
+.nav-section{
+  padding:.5rem 1rem .2rem;
+  font-size:.6rem;text-transform:uppercase;
+  letter-spacing:1.2px;color:#ffffff33;font-weight:700;
+}
+.nav-item-link{
+  display:flex;align-items:center;gap:.6rem;
+  padding:.58rem .9rem;
+  color:#ffffffaa;text-decoration:none;
+  font-size:.84rem;border-radius:8px;
+  margin:1px .5rem;transition:.15s;
+  white-space:nowrap;
+}
+.nav-item-link:hover{background:#ffffff14;color:#fff}
+.nav-item-link.active{background:#EF9F2720;color:var(--gold);font-weight:600}
+.nav-item-link .icon{width:20px;text-align:center;font-size:.95rem;flex-shrink:0}
 
-/* CARDS */
-.card{border:none;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
-.stat-card{background:#fff;border-radius:12px;padding:1rem;text-align:center}
-.stat-val{font-size:1.6rem;font-weight:700;color:#1a2b4a;line-height:1.1}
-.stat-val.sm{font-size:1.1rem}
-.stat-lbl{font-size:.68rem;color:#999;text-transform:uppercase;letter-spacing:.5px;margin-top:.2rem}
+/* ══════════════════════════════════════════
+   TOPBAR (mobile)
+══════════════════════════════════════════ */
+.topbar{
+  display:none;
+  position:fixed;top:0;left:0;right:0;height:56px;
+  background:var(--navy);z-index:1001;
+  align-items:center;padding:0 1rem;gap:.75rem;
+}
+.topbar .t-brand{font-size:1rem;font-weight:700;color:#fff}
+.topbar .t-brand span{color:var(--gold)}
+.hamburger{
+  background:none;border:none;cursor:pointer;
+  padding:6px;border-radius:6px;
+  display:flex;flex-direction:column;gap:5px;
+}
+.hamburger span{display:block;width:22px;height:2px;background:#fff;border-radius:2px;transition:.25s}
+.hamburger.open span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+.hamburger.open span:nth-child(2){opacity:0}
+.hamburger.open span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+.sidebar-overlay{
+  display:none;position:fixed;inset:0;background:#00000055;z-index:999;
+}
 
-/* TABLES */
-.table th{background:#1a2b4a;color:#fff;font-size:.77rem;font-weight:600;border:none;padding:.45rem .6rem}
-.table td{font-size:.82rem;vertical-align:middle;padding:.38rem .6rem}
+/* ══════════════════════════════════════════
+   MAIN CONTENT
+══════════════════════════════════════════ */
+.main-content{
+  margin-left:240px;
+  min-height:100vh;
+  padding:1.5rem 1.25rem;
+  max-width:1400px;
+}
+
+/* ══════════════════════════════════════════
+   CARDS & STATS
+══════════════════════════════════════════ */
+.card{
+  border:none;border-radius:var(--radius);
+  box-shadow:var(--shadow);background:var(--card);
+}
+.stat-card{
+  background:var(--card);border-radius:var(--radius);
+  padding:.85rem .75rem;text-align:center;
+  box-shadow:var(--shadow);
+}
+.stat-val{font-size:1.5rem;font-weight:700;color:var(--navy);line-height:1.1}
+.stat-val.sm{font-size:1.05rem}
+.stat-lbl{font-size:.65rem;color:#999;text-transform:uppercase;letter-spacing:.5px;margin-top:.2rem}
+
+/* ══════════════════════════════════════════
+   TABLES
+══════════════════════════════════════════ */
+.table th{
+  background:var(--navy);color:#fff;
+  font-size:.75rem;font-weight:600;
+  border:none;padding:.42rem .55rem;
+  white-space:nowrap;
+}
+.table td{
+  font-size:.8rem;vertical-align:middle;
+  padding:.36rem .55rem;
+}
 .table-hover tbody tr:hover{background:#f0f4ff}
+.table-responsive{-webkit-overflow-scrolling:touch}
 
-/* MISC */
-.hero{background:linear-gradient(135deg,#1a2b4a,#2e5090);color:#fff;border-radius:14px;padding:1.5rem 2rem}
-.page-title{font-size:1.3rem;font-weight:700;color:#1a2b4a;margin-bottom:1rem}
-.badge-win{background:#c8e6c9;color:#1a6b3c;font-size:.72rem;padding:3px 8px;border-radius:20px;font-weight:700}
-.badge-loss{background:#ffcdd2;color:#8b1a1a;font-size:.72rem;padding:3px 8px;border-radius:20px;font-weight:700}
-.badge-draw{background:#e0e0e0;color:#555;font-size:.72rem;padding:3px 8px;border-radius:20px;font-weight:700}
-.gtk-color{color:#1a6b3c;font-weight:700}
-.opp-color{color:#8b1a1a;font-weight:700}
-.upload-zone{border:2px dashed #1a2b4a;border-radius:14px;padding:2.5rem;text-align:center;background:#fff;cursor:pointer;transition:.2s}
-.upload-zone:hover{background:#f0f4ff}
-.nav-tabs .nav-link{color:#666;font-size:.83rem}
-.nav-tabs .nav-link.active{color:#1a2b4a;font-weight:600}
-.section-hdr{font-size:.68rem;text-transform:uppercase;letter-spacing:1px;color:#aaa;font-weight:700;margin:.75rem 0 .4rem;padding-bottom:.3rem;border-bottom:1px solid #f0f0f0}
-@media(max-width:768px){.sidebar{width:60px}.sidebar .brand,.nav-section,.nav-item-link span,.nav-season{display:none}.main-content{margin-left:60px}}
+/* ══════════════════════════════════════════
+   MISC UI
+══════════════════════════════════════════ */
+.hero{
+  background:linear-gradient(135deg,var(--navy),var(--navy2));
+  color:#fff;border-radius:14px;padding:1.25rem 1.5rem;
+}
+.page-title{font-size:1.2rem;font-weight:700;color:var(--navy);margin-bottom:.75rem}
+.badge-win{background:#c8e6c9;color:var(--gtk);font-size:.72rem;padding:3px 10px;border-radius:20px;font-weight:700}
+.badge-loss{background:#ffcdd2;color:var(--opp);font-size:.72rem;padding:3px 10px;border-radius:20px;font-weight:700}
+.badge-draw{background:#e0e0e0;color:#555;font-size:.72rem;padding:3px 10px;border-radius:20px;font-weight:700}
+.gtk-color{color:var(--gtk);font-weight:700}
+.opp-color{color:var(--opp);font-weight:700}
+.upload-zone{
+  border:2px dashed #c5cfe8;border-radius:14px;
+  padding:2rem 1.5rem;text-align:center;
+  background:#fff;cursor:pointer;transition:.2s;
+}
+.upload-zone:hover{background:#f0f4ff;border-color:var(--navy)}
+.nav-tabs .nav-link{color:#666;font-size:.82rem;padding:.4rem .8rem}
+.nav-tabs .nav-link.active{color:var(--navy);font-weight:600;border-bottom:2px solid var(--navy)}
+.section-hdr{
+  font-size:.66rem;text-transform:uppercase;letter-spacing:1px;
+  color:#aaa;font-weight:700;margin:.6rem 0 .35rem;
+  padding-bottom:.25rem;border-bottom:1px solid #f0f0f0;
+}
+.flash-msg{padding:.6rem 1rem;border-radius:8px;margin-bottom:.75rem;font-size:.85rem}
+.flash-success{background:#e8f5e9;color:#1a6b3c;border:1px solid #a5d6a7}
+.flash-error{background:#ffebee;color:#8b1a1a;border:1px solid #ef9a9a}
+
+/* ══════════════════════════════════════════
+   RESPONSIVE BREAKPOINTS
+══════════════════════════════════════════ */
+
+/* Tablet (< 992px) — sidebar zwężony */
+@media(max-width:991px){
+  .sidebar{width:60px}
+  .sidebar .brand-text,.sidebar .sub,
+  .nav-section,.nav-item-link span,
+  .nav-season{display:none}
+  .nav-item-link{justify-content:center;padding:.6rem;margin:2px 4px}
+  .main-content{margin-left:60px;padding:1.25rem 1rem}
+}
+
+/* Mobile (< 768px) — sidebar chowana, topbar widoczny */
+@media(max-width:767px){
+  .sidebar{transform:translateX(-100%);width:240px}
+  .sidebar.mobile-open{transform:translateX(0)}
+  .sidebar .brand-text,.sidebar .sub,
+  .nav-section,.nav-item-link span,
+  .nav-season{display:block}
+  .nav-item-link{justify-content:flex-start;padding:.58rem .9rem;margin:1px .5rem}
+  .topbar{display:flex}
+  .main-content{margin-left:0;padding:4.5rem 1rem 1.5rem}
+  .hero{padding:1rem 1.1rem}
+  .stat-val{font-size:1.2rem}
+  .page-title{font-size:1.05rem}
+  .table th,.table td{font-size:.72rem;padding:.3rem .4rem}
+}
+
+/* Bardzo małe (< 480px) */
+@media(max-width:479px){
+  .main-content{padding:4.5rem .75rem 1.5rem}
+  .hero{padding:.85rem 1rem}
+  .stat-card{padding:.65rem .5rem}
+  .stat-val{font-size:1rem}
+  .stat-val.sm{font-size:.9rem}
+  .stat-lbl{font-size:.6rem}
+  .card .card-body{padding:.75rem .65rem !important}
+  .btn-sm{font-size:.72rem;padding:.25rem .5rem}
+  .nav-tabs .nav-link{font-size:.75rem;padding:.35rem .5rem}
+}
 </style>
 """
 
@@ -416,36 +568,84 @@ def nav(active="home"):
     except: pass
 
     items = [
-        ("home",    "/",            "🏠", "Strona główna"),
-        ("history", "/historia",    "📋", "Historia meczów"),
-        ("season",  "/sezon",       "📊", "Statystyki sezonu"),
-        ("players", "/zawodnicy",   "👤", "Zawodnicy sezonu"),
-        ("settings","ustawienia", "⚙️", "Ustawienia"),
+        ("home",     "/",          "🏠", "Strona główna"),
+        ("history",  "/historia",  "📋", "Historia meczów"),
+        ("season",   "/sezon",     "📊", "Statystyki sezonu"),
+        ("players",  "/zawodnicy", "👤", "Zawodnicy sezonu"),
+        ("settings", "/ustawienia","⚙️", "Ustawienia"),
     ]
     links = ""
     for key, href, icon, label in items:
-        a_class = "nav-item-link active" if active==key else "nav-item-link"
-        real_href = href if href != "ustawienia" else "/ustawienia"
-        links += f'<a href="{real_href}" class="{a_class}"><span class="icon">{icon}</span><span>{label}</span></a>'
+        cls = "nav-item-link active" if active==key else "nav-item-link"
+        links += (f'<a href="{href}" class="{cls}">'
+                  f'<span class="icon">{icon}</span>'
+                  f'<span class="brand-text">{label}</span></a>')
 
     return f"""
-<div class="sidebar">
+<!-- TOPBAR mobile -->
+<div class="topbar">
+  <button class="hamburger" id="hamburger" aria-label="Menu" onclick="toggleSidebar()">
+    <span></span><span></span><span></span>
+  </button>
+  <div class="t-brand"><span>●</span> Basket Kołcz</div>
+</div>
+
+<!-- OVERLAY mobile -->
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+<!-- SIDEBAR -->
+<div class="sidebar" id="sidebar">
   <div class="sidebar-logo">
-    <div class="brand"><span>●</span> Basket Kołcz</div>
-    <div class="sub">Analytics Platform</div>
+    <div class="brand"><span>●</span> <span class="brand-text">Basket Kołcz</span></div>
+    <div class="sub brand-text">Analytics Platform</div>
   </div>
-  <div class="nav-season"><strong>{gtk_name}</strong>Sezon {season}</div>
-  <div class="nav-section">Nawigacja</div>
+  <div class="nav-season brand-text"><strong>{gtk_name}</strong>Sezon {season}</div>
+  <div class="nav-section brand-text">Nawigacja</div>
   {links}
-</div>"""
+</div>
+
+<script>
+function toggleSidebar(){{
+  const s=document.getElementById('sidebar');
+  const o=document.getElementById('sidebarOverlay');
+  const h=document.getElementById('hamburger');
+  s.classList.toggle('mobile-open');
+  o.style.display=s.classList.contains('mobile-open')?'block':'none';
+  h.classList.toggle('open');
+}}
+// Zamknij przy resize
+window.addEventListener('resize',()=>{{
+  if(window.innerWidth>767){{
+    document.getElementById('sidebar').classList.remove('mobile-open');
+    document.getElementById('sidebarOverlay').style.display='none';
+    document.getElementById('hamburger').classList.remove('open');
+  }}
+}});
+</script>"""
 
 def base(content, scripts="", active="home"):
-    return f"""<!DOCTYPE html><html lang="pl"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Basket Kołcz Analytics</title>{CSS}</head>
+    # Flash messages
+    flash_html = ""
+    try:
+        from flask import get_flashed_messages
+        msgs = get_flashed_messages(with_categories=True)
+        for cat, msg in msgs:
+            css = "flash-success" if cat == "success" else "flash-error"
+            flash_html += f'<div class="{css} flash-msg">{msg}</div>'
+    except: pass
+
+    return f"""<!DOCTYPE html>
+<html lang="pl"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Basket Kołcz Analytics</title>
+{CSS}
+</head>
 <body>
 {nav(active)}
 <div class="main-content">
+{flash_html}
 {content}
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
