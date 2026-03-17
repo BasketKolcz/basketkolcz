@@ -839,22 +839,26 @@ def validate_workbook(wb):
     except: meta_pts_a = meta_pts_b = None
 
     if meta_pts_a is not None:
+        q_pts_a = [stats_a["quarter"].get(q,{}).get("pts",0) for q in [1,2,3,4]]
         if meta_pts_a != pts_a:
-            errors.append(
-                f"❌ Wynik <b>{name_a}</b> w META: <b>{meta_pts_a}</b> pkt, "
-                f"ale suma z kodowania: <b>{pts_a}</b> pkt "
-                f"(różnica: {pts_a - meta_pts_a:+d})"
-            )
+            errors.append({
+                "msg": f"Wynik <b>{name_a}</b> w META: <b>{meta_pts_a}</b> pkt, suma z kodowania: <b>{pts_a}</b> pkt (różnica: {pts_a-meta_pts_a:+d})",
+                "quarters": q_pts_a,
+                "total": pts_a,
+                "meta": meta_pts_a,
+            })
         else:
             info.append(f"✓ Wynik {name_a}: <b>{pts_a}</b> pkt — zgodny z META")
 
     if meta_pts_b is not None:
+        q_pts_b = [stats_b["quarter"].get(q,{}).get("pts",0) for q in [1,2,3,4]]
         if meta_pts_b != pts_b:
-            errors.append(
-                f"❌ Wynik <b>{name_b}</b> w META: <b>{meta_pts_b}</b> pkt, "
-                f"ale suma z kodowania: <b>{pts_b}</b> pkt "
-                f"(różnica: {pts_b - meta_pts_b:+d})"
-            )
+            errors.append({
+                "msg": f"Wynik <b>{name_b}</b> w META: <b>{meta_pts_b}</b> pkt, suma z kodowania: <b>{pts_b}</b> pkt (różnica: {pts_b-meta_pts_b:+d})",
+                "quarters": q_pts_b,
+                "total": pts_b,
+                "meta": meta_pts_b,
+            })
         else:
             info.append(f"✓ Wynik {name_b}: <b>{pts_b}</b> pkt — zgodny z META")
 
@@ -982,8 +986,15 @@ def upload():
             # Zapisz tylko lekkie dane w sesji (bez pliku!)
             import re as _re
             def clean(s):
-                s = _re.sub(r'<[^>]+>', '', str(s))
-                return s[:120]
+                if isinstance(s, dict):
+                    # Błąd z kwartami — zachowaj strukturę ale skróć msg
+                    return {
+                        "msg": _re.sub(r'<[^>]+>', '', s.get("msg",""))[:150],
+                        "quarters": s.get("quarters",[]),
+                        "total": s.get("total",0),
+                        "meta": s.get("meta",None),
+                    }
+                return _re.sub(r'<[^>]+>', '', str(s))[:120]
 
             session.clear()
             session["pt"] = token
@@ -1253,10 +1264,47 @@ def validation_report():
     pts      = vr.get("p",[0,0])
     has_errors = len(errors) > 0
 
-    def render_items(items, cls, icon):
-        if not items: return ""
-        rows = "".join(f'<div class="val-item {cls}"><span class="val-icon">{icon}</span><span>{it}</span></div>' for it in items)
-        return rows
+    # Renderuj błędy — obsługa zarówno dict (z kwartami) jak i str
+    def render_error(e, idx):
+        if isinstance(e, dict):
+            msg      = e.get("msg","")
+            quarters = e.get("quarters",[])
+            total    = e.get("total",0)
+            meta_pts = e.get("meta",None)
+            # Pasek per kwarta
+            q_html = ""
+            if quarters:
+                q_items = " | ".join(
+                    f'<span style="font-weight:700;color:#{'1a6b3c' if quarters[i]==max(quarters) else 'b71c1c' if quarters[i]==min(quarters) else '444'}">'
+                    f'{i+1}Q — {quarters[i]}</span>'
+                    for i in range(len(quarters))
+                )
+                q_html = f"""
+                <div style="margin-top:.5rem;padding:.4rem .6rem;background:#fff;border-radius:6px;border:1px solid #ffcdd2;font-size:.82rem">
+                  {q_items}
+                  <span style="margin-left:.5rem;color:#888;font-size:.75rem">= {total} pkt (META: {meta_pts})</span>
+                </div>"""
+            return f"""
+            <div class="val-item val-error" style="flex-direction:column;cursor:pointer" onclick="this.querySelector('.qdetail').style.display=this.querySelector('.qdetail').style.display=='none'?'block':'none'">
+              <div style="display:flex;gap:.75rem;align-items:flex-start;width:100%">
+                <span class="val-icon">🚫</span>
+                <span style="flex:1">{msg}</span>
+                <span style="font-size:.75rem;color:#c62828;flex-shrink:0">▼ rozwiń</span>
+              </div>
+              <div class="qdetail" style="display:none">{q_html}</div>
+            </div>"""
+        else:
+            return f'<div class="val-item val-error"><span class="val-icon">🚫</span><span>{e}</span></div>'
+
+    def render_warning(w):
+        return f'<div class="val-item val-warning"><span class="val-icon">⚠️</span><span>{w}</span></div>'
+
+    def render_info(i):
+        return f'<div class="val-item val-info"><span class="val-icon">✓</span><span>{i}</span></div>'
+
+    errors_html   = "".join(render_error(e, i) for i,e in enumerate(errors))
+    warnings_html = "".join(render_warning(w) for w in warnings)
+    info_html     = "".join(render_info(i) for i in info)
 
     content = f"""
 <div class="page-title">🔍 Raport walidacji pliku</div>
@@ -1291,9 +1339,9 @@ def validation_report():
 </style>
 
 <div class="card p-3">
-{'<div class="val-section"><div class="val-section-title" style="background:#ffebee;color:#c62828">🚫 Błędy krytyczne (' + str(len(errors)) + ') — wymagana poprawa</div>' + render_items(errors,"val-error","🚫") + '</div>' if errors else ''}
-{'<div class="val-section"><div class="val-section-title" style="background:#fff8e1;color:#f57f17">⚠️ Ostrzeżenia (' + str(len(warnings)) + ')</div>' + render_items(warnings,"val-warning","⚠️") + '</div>' if warnings else ''}
-{'<div class="val-section"><div class="val-section-title" style="background:#e8f5e9;color:#2e7d32">✓ Poprawne (' + str(len(info)) + ')</div>' + render_items(info,"val-info","✓") + '</div>' if info else ''}
+  {'<div class="val-section"><div class="val-section-title" style="background:#ffebee;color:#c62828">🚫 Błędy krytyczne (' + str(len(errors)) + ') — kliknij aby rozwinąć</div>' + errors_html + '</div>' if errors else ''}
+  {'<div class="val-section"><div class="val-section-title" style="background:#fff8e1;color:#f57f17">⚠️ Ostrzeżenia (' + str(len(warnings)) + ')</div>' + warnings_html + '</div>' if warnings else ''}
+  {'<div class="val-section"><div class="val-section-title" style="background:#e8f5e9;color:#2e7d32">✓ Poprawne (' + str(len(info)) + ')</div>' + info_html + '</div>' if info else ''}
 </div>
 
 {'<div class="card p-3 mt-2" style="background:#fff0f0;border:1px solid #ffcdd2"><b>Plik zawiera błędy krytyczne.</b> Popraw plik i wgraj ponownie.</div>' if has_errors else '<div class="card p-3 mt-2" style="background:#fffde7;border:1px solid #fff176"><b>Plik zawiera ostrzeżenia.</b> Możesz zapisać mimo ostrzeżeń lub poprawić plik.</div>'}
