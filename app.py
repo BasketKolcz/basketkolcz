@@ -165,10 +165,15 @@ ACTION_F   = {"F"}
 BUCKETS    = ["0s","1-4s","5-8s","9-12s","13-16s","17-20s","21-24s"]
 
 def extract_ft(code):
+    # Format X/YW — np. 1/2W, 2/2W, 0/3W
     m = re.match(r'^(\d+)/(\d+)W', code)
     if m: return int(m.group(1)), int(m.group(2))
     m2 = re.search(r'(\d+)/(\d+)W', code)
     if m2: return int(m2.group(1)), int(m2.group(2))
+    # Plus-one: 2+1, 3+1, 2D+1 → celny 1/1 RW
+    if re.search(r'\+1$', code): return 1, 1
+    # Plus-zero: 2+0, 3+0, 2D+0 → niecelny 0/1 RW
+    if re.search(r'\+0$', code): return 0, 1
     return 0, 0
 
 def time_bucket(t):
@@ -1943,6 +1948,46 @@ def mecz(match_id):
             <thead><tr><th>{hdr_id}</th><th>PTS</th><th>2PM/A</th><th>3PM/A</th><th>FTM/A</th><th>eFG%</th><th>TS%</th><th>AST</th><th>OREB</th><th>DREB</th><th>BR</th><th>FIN</th></tr></thead>
             <tbody>{rows}</tbody></table></div>"""
 
+    # Piątki
+    def lineup_table():
+        if not all_lineups:
+            return '<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych piątek — wgraj mecz ponownie aby wygenerować.</p>'
+        rows = ""
+        for i, lu in enumerate(all_lineups):
+            fga = int(lu.get("p2a",0) or 0) + int(lu.get("p3a",0) or 0)
+            pts  = int(lu.get("pts",0) or 0)
+            poss = int(lu.get("poss",0) or 0)
+            p2m  = int(lu.get("p2m",0) or 0); p2a = int(lu.get("p2a",0) or 0)
+            p3m  = int(lu.get("p3m",0) or 0); p3a = int(lu.get("p3a",0) or 0)
+            ftm  = int(lu.get("ftm",0) or 0); fta = int(lu.get("fta",0) or 0)
+            br   = int(lu.get("br",0) or 0)
+            efg  = f"{(p2m+1.5*p3m)/fga:.0%}" if fga else "—"
+            ppp  = f"{pts/poss:.2f}" if poss else "—"
+            ppp_color = "#1a6b3c" if poss and pts/poss>=0.9 else ("#8b1a1a" if poss and pts/poss<0.7 else "#444")
+            bg = "#f8f9ff" if i%2==0 else "#fff"
+            # Skład — zamień numery na nazwiska jeśli dostępne
+            skladniki = " · ".join(nr_name_map.get(n, f"#{n}") for n in lu["lineup"].split("-"))
+            rows += f"""<tr style="background:{bg}">
+                <td style="font-size:.78rem">{skladniki}</td>
+                <td class="text-center">{poss}</td>
+                <td class="text-center fw-bold" style="color:#1a2b4a">{pts}</td>
+                <td class="text-center fw-bold" style="color:{ppp_color}">{ppp}</td>
+                <td class="text-center">{efg}</td>
+                <td class="text-center">{p2m}/{p2a}</td>
+                <td class="text-center">{p3m}/{p3a}</td>
+                <td class="text-center">{ftm}/{fta}</td>
+                <td class="text-center">{br}</td>
+            </tr>"""
+        return f"""<p style="font-size:.72rem;color:#aaa;margin-bottom:.5rem">Posiadania ≥ 1 · PPP: <span style="color:#1a6b3c">≥0.90 dobry</span> / <span style="color:#8b1a1a">&lt;0.70 słaby</span></p>
+        <div class="table-responsive"><table class="table table-hover mb-0">
+        <thead><tr>
+          <th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th>
+          <th class="text-center">PPP</th><th class="text-center">eFG%</th>
+          <th class="text-center">2PM/A</th><th class="text-center">3PM/A</th>
+          <th class="text-center">FTM/A</th><th class="text-center">BR</th>
+        </tr></thead>
+        <tbody>{rows}</tbody></table></div>"""
+
     # Shot timing
     def tim_table(druzyna):
         rows = ""
@@ -1993,7 +2038,6 @@ def mecz(match_id):
 <ul class="nav nav-tabs mb-2" id="mainTabs">
   <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabGTK">{gtk_name}</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabOPP">{name_opp}</button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabLINEUPS">Piątki</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabCMP">Porównanie</button></li>
 </ul>
 
@@ -2004,11 +2048,13 @@ def mecz(match_id):
   <ul class="nav nav-tabs mt-2 mb-1" id="gtkTabs">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#gtk_q">Per kwarta</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_p">Zawodnicy</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_l">Piątki</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_t">Timing rzutów</button></li>
   </ul>
   <div class="tab-content">
     <div class="tab-pane fade show active" id="gtk_q"><div class="card mt-1"><div class="card-body p-2">{q_table('gtk')}</div></div></div>
     <div class="tab-pane fade" id="gtk_p"><div class="card mt-1"><div class="card-body p-2">{p_table('gtk')}</div></div></div>
+    <div class="tab-pane fade" id="gtk_l"><div class="card mt-1"><div class="card-body p-2">{lineup_table()}</div></div></div>
     <div class="tab-pane fade" id="gtk_t"><div class="card mt-1"><div class="card-body p-2">{tim_table('gtk')}</div></div></div>
   </div>
 </div>
@@ -2025,47 +2071,6 @@ def mecz(match_id):
     <div class="tab-pane fade" id="opp_p"><div class="card mt-1"><div class="card-body p-2">{p_table('opp')}</div></div></div>
     <div class="tab-pane fade" id="opp_t"><div class="card mt-1"><div class="card-body p-2">{tim_table('opp')}</div></div></div>
   </div>
-</div>
-
-<div class="tab-pane fade" id="tabLINEUPS">
-  <div class="card mt-2"><div class="card-body p-2">
-    <p style="font-size:.78rem;color:#aaa">Statystyki piątek — {gtk_name} (posiadania ≥ 1)</p>
-    {'<div class="table-responsive"><table class="table table-hover mb-0"><thead><tr>' +
-     '<th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th>' +
-     '<th class="text-center">PPP</th><th class="text-center">eFG%</th>' +
-     '<th class="text-center">2PM/A</th><th class="text-center">3PM/A</th>' +
-     '<th class="text-center">FTM/A</th><th class="text-center">BR</th>' +
-     '</tr></thead><tbody>' +
-     "".join(
-       (lambda lu, i: (
-         lambda fga, pts, poss, efg, ppp, bg:
-         f'<tr style="background:{bg}">'
-         f'<td style="font-size:.78rem">'
-         + " · ".join(nr_name_map.get(n, f"#{n}") for n in lu["lineup"].split("-"))
-         + f'</td>'
-         f'<td class="text-center">{poss}</td>'
-         f'<td class="text-center fw-bold" style="color:#1a2b4a">{pts}</td>'
-         f'<td class="text-center fw-bold" style="color:{"#1a6b3c" if float(ppp.replace("-","0"))>=0.9 else "#8b1a1a" if float(ppp.replace("-","0"))<0.7 and ppp!="-" else ""}">{ppp}</td>'
-         f'<td class="text-center">{efg}</td>'
-         f'<td class="text-center">{int(lu.get("p2m",0))}/{int(lu.get("p2a",0))}</td>'
-         f'<td class="text-center">{int(lu.get("p3m",0))}/{int(lu.get("p3a",0))}</td>'
-         f'<td class="text-center">{int(lu.get("ftm",0))}/{int(lu.get("fta",0))}</td>'
-         f'<td class="text-center">{int(lu.get("br",0))}</td>'
-         f'</tr>'
-       )(
-         int(lu.get("p2a",0))+int(lu.get("p3a",0)),
-         int(lu.get("pts",0)),
-         int(lu.get("poss",0)),
-         f'{(int(lu.get("p2m",0))+1.5*int(lu.get("p3m",0)))/(int(lu.get("p2a",0))+int(lu.get("p3a",0))):.0%}' if (int(lu.get("p2a",0))+int(lu.get("p3a",0))) else "—",
-         f'{int(lu.get("pts",0))/int(lu.get("poss",0)):.2f}' if int(lu.get("poss",0)) else "—",
-         "#f8f9ff" if i%2==0 else "#fff"
-       )
-       )(lu, i)
-       for i, lu in enumerate(all_lineups)
-     ) +
-     '</tbody></table></div>'
-     if all_lineups else '<p class="text-muted p-3">Brak danych piątek — wgraj plik ponownie aby wygenerować</p>'}
-  </div></div>
 </div>
 
 <div class="tab-pane fade" id="tabCMP">
