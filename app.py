@@ -1552,33 +1552,43 @@ def upload_force():
 def historia():
     try: init_db()
     except: pass
-    sezon_filter = request.args.get("sezon","")
+    sezon_filter    = request.args.get("sezon","")
+    data_od         = request.args.get("data_od","")
+    data_do         = request.args.get("data_do","")
+    przeciwnik_filter = request.args.get("przeciwnik","").strip().lower()
+
     db = get_db(); cur = db.cursor()
 
+    # Buduj WHERE
+    conditions = []
+    params = []
+    if sezon_filter:
+        conditions.append("sezon=%s"); params.append(sezon_filter)
+    if data_od:
+        conditions.append("data_meczu >= %s"); params.append(data_od)
+    if data_do:
+        conditions.append("data_meczu <= %s"); params.append(data_do)
+    if przeciwnik_filter:
+        conditions.append("LOWER(przeciwnik) LIKE %s"); params.append(f"%{przeciwnik_filter}%")
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
     try:
-        if sezon_filter:
-            cur.execute("""SELECT id,sezon,data_meczu,przeciwnik,
-                           COALESCE(rozgrywki,'') as rozgrywki,
-                           COALESCE(runda,'') as runda,
-                           COALESCE(miejsce,'') as miejsce,
-                           wynik_gtk,wynik_opp,created_at
-                           FROM matches WHERE sezon=%s ORDER BY created_at DESC""", (sezon_filter,))
-        else:
-            cur.execute("""SELECT id,sezon,data_meczu,przeciwnik,
-                           COALESCE(rozgrywki,'') as rozgrywki,
-                           COALESCE(runda,'') as runda,
-                           COALESCE(miejsce,'') as miejsce,
-                           wynik_gtk,wynik_opp,created_at
-                           FROM matches ORDER BY created_at DESC""")
+        cur.execute(f"""SELECT id,sezon,data_meczu,przeciwnik,
+                       COALESCE(rozgrywki,'') as rozgrywki,
+                       COALESCE(runda,'') as runda,
+                       COALESCE(miejsce,'') as miejsce,
+                       wynik_gtk,wynik_opp
+                       FROM matches {where}
+                       ORDER BY data_meczu DESC NULLS LAST, created_at DESC""", params)
     except:
-        if sezon_filter:
-            cur.execute("SELECT *,''::text as rozgrywki,''::text as runda,''::text as miejsce FROM matches WHERE sezon=%s ORDER BY created_at DESC", (sezon_filter,))
-        else:
-            cur.execute("SELECT *,''::text as rozgrywki,''::text as runda,''::text as miejsce FROM matches ORDER BY created_at DESC")
+        cur.execute(f"SELECT * FROM matches {where} ORDER BY created_at DESC", params)
     matches = cur.fetchall()
 
     cur.execute("SELECT DISTINCT sezon FROM matches ORDER BY sezon DESC")
     sezony = [r["sezon"] for r in cur.fetchall()]
+    cur.execute("SELECT DISTINCT przeciwnik FROM matches ORDER BY przeciwnik")
+    przeciwnicy = [r["przeciwnik"] for r in cur.fetchall()]
     cur.close()
 
     rows = ""
@@ -1608,44 +1618,90 @@ def historia():
         </tr>"""
 
     season_opts = "".join([f'<option value="{s}" {"selected" if s==sezon_filter else ""}>{s}</option>' for s in sezony])
+    opp_opts    = "".join([f'<option value="{p}" {"selected" if p.lower()==przeciwnik_filter else ""}>{p}</option>' for p in przeciwnicy])
 
     content = f"""
 <div class="page-title">📋 Historia meczów</div>
+
 <div class="card p-3 mb-3">
-  <div class="d-flex gap-2 align-items-center flex-wrap">
-    <form method="GET" class="d-flex gap-2 align-items-center">
-      <label style="font-size:.82rem;font-weight:600">Sezon:</label>
-      <select name="sezon" class="form-select form-select-sm" style="width:120px" onchange="this.form.submit()">
-        <option value="">Wszystkie</option>
-        {season_opts}
-      </select>
-    </form>
-    <span style="font-size:.82rem;color:#888">{len(matches)} meczów</span>
-  </div>
+  <form method="GET">
+    <div class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label mb-1" style="font-size:.75rem;font-weight:600">Sezon</label>
+        <select name="sezon" class="form-select form-select-sm" style="width:110px">
+          <option value="">Wszystkie</option>
+          {season_opts}
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-1" style="font-size:.75rem;font-weight:600">Data od</label>
+        <input type="date" name="data_od" class="form-control form-control-sm" value="{data_od}" style="width:140px">
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-1" style="font-size:.75rem;font-weight:600">Data do</label>
+        <input type="date" name="data_do" class="form-control form-control-sm" value="{data_do}" style="width:140px">
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-1" style="font-size:.75rem;font-weight:600">Przeciwnik</label>
+        <select name="przeciwnik" class="form-select form-select-sm" style="width:180px">
+          <option value="">Wszyscy</option>
+          {opp_opts}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary btn-sm">Filtruj</button>
+        <a href="/historia" class="btn btn-outline-secondary btn-sm ms-1">Wyczyść</a>
+      </div>
+      <div class="col-auto ms-auto">
+        <span style="font-size:.82rem;color:#888;line-height:2.2">{len(matches)} meczów</span>
+      </div>
+    </div>
+  </form>
 </div>
+
 <div class="card">
   <div class="card-body p-2">
     <div class="table-responsive">
       <table class="table table-hover mb-0">
         <thead><tr>
           <th style="width:44px"></th>
-          <th>Data</th>
+          <th style="cursor:pointer" onclick="sortTable(1)">Data ↕</th>
           <th>Rozgrywki</th>
           <th>Runda/Kolejka</th>
-          <th>Przeciwnik</th>
+          <th style="cursor:pointer" onclick="sortTable(4)">Przeciwnik ↕</th>
           <th>Miejsce</th>
           <th class="text-center">Wynik</th>
           <th class="text-center">Akcje</th>
         </tr></thead>
-        <tbody>
-          {rows if rows else '<tr><td colspan="8" class="text-center text-muted py-4">Brak meczów — wgraj pierwszy plik zapis.xlsx</td></tr>'}
+        <tbody id="matchTable">
+          {rows if rows else '<tr><td colspan="8" class="text-center text-muted py-4">Brak meczów spełniających kryteria</td></tr>'}
         </tbody>
       </table>
     </div>
   </div>
 </div>"""
 
-    return render_template_string(base(content, active="history"))
+    scripts = """<script>
+let sortDir = {};
+function sortTable(col) {
+    const tbody = document.getElementById('matchTable');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    sortDir[col] = !sortDir[col];
+    rows.sort((a, b) => {
+        const av = a.cells[col]?.textContent.trim() || '';
+        const bv = b.cells[col]?.textContent.trim() || '';
+        // Sortowanie daty DD.MM.YYYY
+        if (col === 1) {
+            const toDate = s => { const p=s.split('.'); return p.length===3?new Date(p[2],p[1]-1,p[0]):new Date(0); }
+            return sortDir[col] ? toDate(bv)-toDate(av) : toDate(av)-toDate(bv);
+        }
+        return sortDir[col] ? bv.localeCompare(av,'pl') : av.localeCompare(bv,'pl');
+    });
+    rows.forEach(r => tbody.appendChild(r));
+}
+</script>"""
+
+    return render_template_string(base(content, scripts, active="history"))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RAPORT MECZU
