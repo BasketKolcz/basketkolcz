@@ -1017,6 +1017,138 @@ def upload():
         return redirect(url_for("index"))
 
 
+@app.route("/walidacja/pobierz-z-bledami")
+def download_with_errors():
+    """Pobierz oryginalny plik z zaznaczonymi błędami na czerwono"""
+    token = session.get("pending_token","")
+    if not token:
+        flash("Sesja wygasła — wgraj plik ponownie","error")
+        return redirect(url_for("index"))
+
+    tmp_path = os.path.join(PENDING_DIR, f"{token}.xlsx")
+    if not os.path.exists(tmp_path):
+        flash("Plik tymczasowy wygasł — wgraj ponownie","error")
+        return redirect(url_for("index"))
+
+    try:
+        with open(tmp_path, "rb") as fp:
+            file_bytes = fp.read()
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
+
+        RED_FILL   = PatternFill("solid", fgColor="FFCDD2")
+        RED_FONT   = Font(color="B71C1C", bold=True)
+        RED_BORDER = Border(
+            left=Side(style="medium", color="E53935"),
+            right=Side(style="medium", color="E53935"),
+            top=Side(style="medium", color="E53935"),
+            bottom=Side(style="medium", color="E53935"),
+        )
+        COMMENT_FILL = PatternFill("solid", fgColor="FFEBEE")
+
+        report = validate_workbook(wb)
+
+        # Zbierz błędy per arkusz per wiersz
+        error_cells = {}  # {(sheet_name, row): [opisy]}
+
+        sheets_data = [s for s in wb.sheetnames if s.upper() not in ("META","KODY","LEGENDA")]
+        if len(sheets_data) >= 2:
+            name_a, name_b = sheets_data[0], sheets_data[1]
+
+            for sheet_name in [name_a, name_b]:
+                ws = wb[sheet_name]
+
+                # ── Wynik końcowy (cały arkusz)
+                suma = suma_quarters(parse_team_sheet(ws))
+                meta = read_meta(wb)
+                key = "wynik_a" if sheet_name == name_a else "wynik_b"
+                try:
+                    meta_pts = int(meta.get(key, "")) if meta.get(key) else None
+                    coded_pts = suma.get("pts", 0)
+                    if meta_pts is not None and meta_pts != coded_pts:
+                        # Zaznacz nagłówek arkusza (wiersz 1)
+                        k = (sheet_name, 1)
+                        if k not in error_cells: error_cells[k] = []
+                        error_cells[k].append(
+                            f"Wynik w META: {meta_pts}, kodowanie: {coded_pts} (różnica: {coded_pts-meta_pts:+d})"
+                        )
+                except: pass
+
+                # ── Brakujące dane (kolumny A/B/C)
+                for i, row in enumerate(ws.iter_rows(min_row=2, max_row=500, values_only=False), 2):
+                    if not any(c.value is not None for c in row[:4]): break
+                    missing = []
+                    if row[0].value is None: missing.append("Kwarta(A)")
+                    if row[2].value is None: missing.append("Kod(C)")
+                    if missing:
+                        k = (sheet_name, i)
+                        if k not in error_cells: error_cells[k] = []
+                        error_cells[k].append(f"Brak: {', '.join(missing)}")
+
+                # ── Nieznane kody akcji
+                for i, row in enumerate(ws.iter_rows(min_row=2, max_row=500, values_only=False), 2):
+                    if not any(c.value is not None for c in row[:4]): break
+                    raw_c = str(row[2].value).strip() if row[2].value is not None else ""
+                    if not raw_c: continue
+                    bad_codes = [c.strip() for c in raw_c.split(";")
+                                 if c.strip() and c.strip() not in VALID_CODES]
+                    if bad_codes:
+                        k = (sheet_name, i)
+                        if k not in error_cells: error_cells[k] = []
+                        error_cells[k].append(f"Nieznany kod: {', '.join(bad_codes)}")
+
+        # ── Zaznacz błędy w pliku ───────────────────────────────────────────
+        for (sheet_name, row_idx), descs in error_cells.items():
+            if sheet_name not in wb.sheetnames: continue
+            ws = wb[sheet_name]
+
+            if row_idx == 1:
+                # Błąd wyniku — zaznacz wiersz nagłówka i dodaj komentarz w A1
+                for col in range(1, 15):
+                    c = ws.cell(row_idx, col)
+                    c.fill = PatternFill("solid", fgColor="FFCCBC")
+                # Wpisz info w wolnym miejscu
+                ws.cell(1, 16).value = "⚠ " + " | ".join(descs)
+                ws.cell(1, 16).font = Font(color="BF360C", bold=True, size=9)
+                ws.cell(1, 16).fill = PatternFill("solid", fgColor="FFF3E0")
+            else:
+                # Błąd w wierszu danych — zaznacz cały wiersz
+                for col in range(1, 12):
+                    c = ws.cell(row_idx, col)
+                    c.fill = RED_FILL
+                    if col in [1, 3]:  # Kwarta i Kod — główne kolumny z błędem
+                        c.font = RED_FONT
+                        c.border = RED_BORDER
+                # Opis błędu w kolumnie O
+                desc_cell = ws.cell(row_idx, 15)
+                desc_cell.value = "❌ " + " | ".join(descs)
+                desc_cell.font = Font(color="B71C1C", bold=True, size=9)
+                desc_cell.fill = COMMENT_FILL
+
+        # ── Dodaj legendę na początku każdego arkusza ──────────────────────
+        for sheet_name in sheets_data:
+            if sheet_name not in wb.sheetnames: continue
+            ws = wb[sheet_name]
+            # Kolumna O nagłówek
+            hdr = ws.cell(1, 15)
+            hdr.value = "BŁĘDY WALIDACJI"
+            hdr.font = Font(color="FFFFFF", bold=True, size=9)
+            hdr.fill = PatternFill("solid", fgColor="C62828")
+            ws.column_dimensions["O"].width = 40
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        names = session.get("validation_report", {}).get("names", ["plik","plik"])
+        filename = f"BLEDY_{names[0]}_vs_{names[1]}.xlsx".replace(" ","_")
+        return send_file(buf, as_attachment=True, download_name=filename,
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+    except Exception as e:
+        flash(f"Błąd generowania pliku: {str(e)}", "error")
+        return redirect(url_for("validation_report"))
+
+
 @app.route("/walidacja")
 def validation_report():
     report = session.get("validation_report")
@@ -1050,6 +1182,7 @@ def validation_report():
     </div>
     <div class="ms-auto d-flex gap-2 flex-wrap">
       <a href="/" class="btn btn-outline-secondary btn-sm">← Anuluj</a>
+      {'<a href="/walidacja/pobierz-z-bledami" class="btn btn-outline-danger btn-sm fw-bold">📥 Pobierz plik z błędami</a>' if has_errors else ''}
       {'<span class="btn btn-secondary btn-sm disabled">Zapisz (popraw błędy)</span>' if has_errors else
        '<form method="POST" action="/upload/force" style="display:inline"><button type="submit" class="btn btn-success btn-sm fw-bold">✓ Zapisz mimo ostrzeżeń</button></form>'}
     </div>
