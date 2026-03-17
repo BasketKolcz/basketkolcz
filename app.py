@@ -687,13 +687,14 @@ def index():
     recent_rows = ""
     for m in recent:
         wynik = f"{m['wynik_gtk']}:{m['wynik_opp']}"
-        if m['wynik_gtk'] > m['wynik_opp']: badge = '<span class="badge-win">W</span>'
+        if m['wynik_gtk'] > m['wynik_opp']:   badge = '<span class="badge-win">W</span>'
         elif m['wynik_gtk'] < m['wynik_opp']: badge = '<span class="badge-loss">L</span>'
-        else: badge = '<span class="badge-draw">D</span>'
-        dt = m['data_meczu'].strftime('%d.%m.%Y') if m['data_meczu'] else "-"
+        else:                                  badge = '<span class="badge-draw">D</span>'
+        dt = m['data_meczu'].strftime('%d.%m.%Y') if m['data_meczu'] else \
+             '<span style="color:#ccc;font-size:.75rem">brak daty</span>'
         recent_rows += f"""<tr>
             <td>{badge}</td>
-            <td>{dt}</td>
+            <td style="font-size:.8rem;color:#666">{dt}</td>
             <td><a href="/mecz/{m['id']}" class="fw-bold text-decoration-none" style="color:#1a2b4a">{m['przeciwnik']}</a></td>
             <td class="text-center fw-bold">{wynik}</td>
         </tr>"""
@@ -717,15 +718,10 @@ def index():
   <div class="card p-3">
     <div class="section-hdr">Wgraj nowy mecz</div>
     <form method="POST" action="/upload" enctype="multipart/form-data">
-      <div class="row g-2 mb-2">
-        <div class="col-6">
-          <label class="form-label" style="font-size:.8rem;font-weight:600">Sezon</label>
-          <input type="text" name="sezon" class="form-control form-control-sm" value="{season}" required>
-        </div>
-        <div class="col-6">
-          <label class="form-label" style="font-size:.8rem;font-weight:600">Data meczu</label>
-          <input type="date" name="data_meczu" class="form-control form-control-sm" value="{datetime.now().strftime('%Y-%m-%d')}">
-        </div>
+      <div class="mb-2">
+        <label class="form-label" style="font-size:.8rem;font-weight:600">Sezon</label>
+        <input type="text" name="sezon" class="form-control form-control-sm" value="{season}" required>
+        <div class="form-text" style="font-size:.72rem">Data meczu zostanie odczytana automatycznie z zakładki META w pliku.</div>
       </div>
       <div class="upload-zone" onclick="document.getElementById('fup').click()">
         <div style="font-size:2rem;margin-bottom:.5rem">📊</div>
@@ -943,13 +939,23 @@ def _do_save(wb, name_gtk, name_opp, sezon, data_meczu):
         init_db()
     except: pass
 
-    # Czytaj nazwy z META jeśli dostępne, fallback do nazw arkuszy
     meta = read_meta(wb)
+
+    # Nazwy z META
     display_gtk = meta.get("nazwa_a","") or name_gtk
     display_opp = meta.get("nazwa_b","") or name_opp
-    # Pomiń domyślne placeholdery
     if display_gtk in ("TWOJA_DRUZYNA","TWOJA_DRUŻYNA","-",""): display_gtk = name_gtk
     if display_opp in ("RYWAL","-",""): display_opp = name_opp
+
+    # Data z META jeśli nie podana
+    if not data_meczu and meta.get("data"):
+        raw = str(meta["data"]).strip().replace(" ","")
+        for fmt in ('%d.%m.%Y','%d/%m/%Y','%Y-%m-%d','%d-%m-%Y','%Y.%m.%d'):
+            try:
+                from datetime import datetime as dt2
+                data_meczu = dt2.strptime(raw, fmt).strftime('%Y-%m-%d')
+                break
+            except: pass
 
     stats_gtk = parse_team_sheet(wb[name_gtk])
     stats_opp = parse_team_sheet(wb[name_opp])
@@ -974,14 +980,71 @@ def upload():
     if not f.filename.endswith(".xlsx"):
         flash("Plik musi być .xlsx","error"); return redirect(url_for("index"))
 
-    sezon      = request.form.get("sezon","2024/25")
-    data_meczu = request.form.get("data_meczu") or None
+    sezon = request.form.get("sezon","2024/25")
 
     try:
         file_bytes = f.read()
         wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
 
-        # Walidacja
+        # ── Odczytaj datę z META ──────────────────────────────────────────
+        meta = read_meta(wb)
+        data_meczu = None
+        if meta.get("data"):
+            raw = str(meta["data"]).strip().replace(" ","")
+            for fmt in ('%d.%m.%Y','%d/%m/%Y','%Y-%m-%d','%d-%m-%Y','%Y.%m.%d'):
+                try:
+                    from datetime import datetime as dt2
+                    data_meczu = dt2.strptime(raw, fmt).strftime('%Y-%m-%d')
+                    break
+                except: pass
+            if not data_meczu:
+                # Fallback — dateutil
+                try:
+                    from dateutil import parser as dp
+                    data_meczu = dp.parse(raw, dayfirst=True).strftime('%Y-%m-%d')
+                except: pass
+
+        # ── Walidacja ─────────────────────────────────────────────────────
+        report = validate_workbook(wb)
+        has_issues = bool(report["errors"] or report["warnings"])
+
+        if has_issues:
+            import uuid
+            token = str(uuid.uuid4())
+            tmp_path = os.path.join(PENDING_DIR, f"{token}.xlsx")
+            with open(tmp_path, "wb") as fp:
+                fp.write(file_bytes)
+
+            import re as _re
+            def clean(s):
+                if isinstance(s, dict):
+                    return {
+                        "msg": _re.sub(r'<[^>]+>', '', s.get("msg",""))[:150],
+                        "quarters": s.get("quarters",[]),
+                        "total": s.get("total",0),
+                        "meta": s.get("meta",None),
+                    }
+                return _re.sub(r'<[^>]+>', '', str(s))[:120]
+
+            session.clear()
+            session["pt"] = token
+            session["ps"] = sezon
+            session["pd"] = data_meczu or ""
+            session["vr"] = {
+                "e": [clean(e) for e in report["errors"][:8]],
+                "w": [clean(w) for w in report["warnings"][:8]],
+                "i": [clean(i) for i in report["info"][:6]],
+                "n": list(report["names"]),
+                "p": list(report["pts"]),
+            }
+            return redirect(url_for("validation_report"))
+
+        # ── Brak problemów — zapisz od razu ──────────────────────────────
+        return _do_save(wb, report["names"][0], report["names"][1], sezon, data_meczu)
+
+    except Exception as e:
+        flash(f"Błąd wgrywania: {str(e)}","error")
+        return redirect(url_for("index"))        # Walidacja
         report = validate_workbook(wb)
 
         has_issues = bool(report["errors"] or report["warnings"])
