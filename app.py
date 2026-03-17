@@ -2511,9 +2511,9 @@ def sezon():
 new Chart(document.getElementById('winChart'),{{
   type:'doughnut',
   data:{{
-    labels:['Wygrane','Przegrane','Remisy'],
-    datasets:[{{data:[{wins},{losses},{draws}],
-      backgroundColor:['#1a6b3c','#8b1a1a','#888'],
+    labels:['Wygrane','Przegrane'],
+    datasets:[{{data:[{wins},{losses}],
+      backgroundColor:['#1a6b3c','#8b1a1a'],
       borderWidth:0}}]
   }},
   options:{{responsive:true,plugins:{{legend:{{position:'bottom'}}}}}}
@@ -3935,57 +3935,172 @@ def export_match_pdf(match_id):
 @app.route("/template/zapis")
 def template_zapis():
     wb = openpyxl.Workbook()
-    HDR=PatternFill("solid",fgColor="1A2B4A"); HDR_F=Font(color="FFFFFF",bold=True,size=10)
-    YEL=PatternFill("solid",fgColor="FFF9C4"); GRN=PatternFill("solid",fgColor="E8F5E9")
-    CTR=Alignment(horizontal="center",vertical="center",wrap_text=True)
-    BORDER=Border(bottom=Side(style="thin",color="CCCCCC"),right=Side(style="thin",color="CCCCCC"),
-                  left=Side(style="thin",color="CCCCCC"),top=Side(style="thin",color="CCCCCC"))
 
-    KODY=[("2","Celny rzut za 2"),("0/2","Niecelny rzut za 2"),("3","Celny rzut za 3"),
-          ("0/3","Niecelny rzut za 3"),("BR","Strata"),("P","Przerwanie"),("F","Faul"),
-          ("2+1","2pkt + faul (1 RW)"),("2+0","2pkt + faul (0/1 RW)"),
-          ("3+1","3pkt + faul (1 RW)"),("3+0","3pkt + faul (0/1 RW)"),
-          ("2D","Dobitka celna"),("0/2D","Dobitka niecelna"),
-          ("2D+1","Dobitka celna + faul (bez RW)"),
-          ("2D+0/1W","Celna dobitka + faul (RW niecelny)"),
-          ("2D+1/1W","Celna dobitka + faul (RW celny)"),
-          ("0D+0/2W","Niecelna dobitka + faul (2 RW niecelne)"),
-          ("0D+1/2W","Niecelna dobitka + faul (1/2 RW celny)"),
-          ("1/2W","1/2 RW"),("2/2W","2/2 RW"),("0/2W","0/2 RW"),
-          ("1/3W","1/3 RW"),("2/3W","2/3 RW"),("3/3W","3/3 RW"),("0/3W","0/3 RW"),
-          ("1/2WL","1/2 RW — ostatni"),("2/2WL","2/2 RW — ostatni"),("0/2WL","0/2 RW — ostatni"),
-          ("1/1WT","1/1 RW — techniczny"),("0/1WT","0/1 RW — techniczny")]
+    # ── Style ─────────────────────────────────────────────────────────────────
+    HDR     = PatternFill("solid", fgColor="1A2B4A")
+    HDR_F   = Font(color="FFFFFF", bold=True, size=11)
+    GREEN_H = PatternFill("solid", fgColor="99FF66")   # nagłówki A,B,C
+    YELLOW_H= PatternFill("solid", fgColor="FFFF99")   # D, J, K
+    BLUE_H  = PatternFill("solid", fgColor="BBDEFB")   # E-I zawodnicy
+    TEAL_H  = PatternFill("solid", fgColor="B2DFDB")   # L,M,N
+    META_KEY= PatternFill("solid", fgColor="E8F5E9")
+    META_VAL= PatternFill("solid", fgColor="FFFDE7")
+    META_INFO=PatternFill("solid", fgColor="E3F2FD")
+    YEL_ROW = PatternFill("solid", fgColor="FFFDE7")   # wiersze danych A-C
+    CTR  = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT = Alignment(horizontal="left",   vertical="center", wrap_text=False)
+    BD   = Border(
+        left=Side(style="thin", color="CCCCCC"),
+        right=Side(style="thin", color="CCCCCC"),
+        top=Side(style="thin", color="CCCCCC"),
+        bottom=Side(style="thin", color="CCCCCC"),
+    )
 
-    ws_k=wb.active; ws_k.title="KODY"
-    ws_k.merge_cells("A1:B1"); t=ws_k["A1"]; t.value="KODY AKCJI"; t.fill=HDR; t.font=Font(color="FFFFFF",bold=True,size=12); t.alignment=CTR
-    for col,lbl in [("A","KOD"),("B","OPIS")]:
-        c=ws_k[f"{col}2"]; c.value=lbl; c.fill=HDR; c.font=HDR_F; c.alignment=CTR
-    ws_k.column_dimensions["A"].width=12; ws_k.column_dimensions["B"].width=32
-    for i,(k,o) in enumerate(KODY):
-        r=3+i
-        c1=ws_k.cell(r,1,k); c1.fill=YEL; c1.alignment=CTR; c1.border=BORDER; c1.font=Font(bold=True)
-        c2=ws_k.cell(r,2,o); c2.border=BORDER
-        if i%2==0: c2.fill=PatternFill("solid",fgColor="FAFAFA")
+    gtk_name = get_setting("gtk_name") or "TWOJA_DRUŻYNA"
 
-    COLS=[("A","Kwarta",7),("B","Czas",9),("C","Kod",12),("D","Strefa",8),
-          ("E","Zaw 1",11),("F","Zaw 2",11),("G","Zaw 3",11),("H","Zaw 4",11),("I","Zaw 5",11),
-          ("J","Timeout",8),("K","Kończący",11),("L","Asysta",9),("M","OREB",9),("N","DREB",9)]
+    # ── ARKUSZ META ───────────────────────────────────────────────────────────
+    ws_meta = wb.active; ws_meta.title = "META"
+    ws_meta.column_dimensions["A"].width = 24
+    ws_meta.column_dimensions["B"].width = 28
 
-    for team in ["drużyna_A","drużyna_B"]:
-        ws=wb.create_sheet(team)
-        ws.merge_cells("A1:N1"); t=ws["A1"]; t.value=f"ZAPIS MECZU — {team}"; t.fill=HDR; t.font=Font(color="FFFFFF",bold=True,size=11); t.alignment=CTR
-        for col,lbl,w in COLS:
-            ws.column_dimensions[col].width=w; c=ws[f"{col}2"]; c.value=lbl; c.fill=HDR; c.font=HDR_F; c.alignment=CTR; c.border=BORDER
-        ws.row_dimensions[2].height=28
-        for r in range(3,53):
-            for col,_,_ in COLS:
-                c=ws[f"{col}{r}"]; c.border=BORDER; c.alignment=Alignment(horizontal="center",vertical="center")
-                if col in ["A","B","C","D"]: c.fill=YEL
-                elif col in ["K","L","M","N"]: c.fill=GRN
-        ws.freeze_panes="A3"
+    ws_meta.merge_cells("A1:B1")
+    t = ws_meta["A1"]
+    t.value = "DANE MECZU — wypełnij przed kodowaniem"
+    t.fill = HDR; t.font = HDR_F; t.alignment = CTR
+    ws_meta.row_dimensions[1].height = 22
 
-    buf=io.BytesIO(); wb.save(buf); buf.seek(0)
-    return send_file(buf, as_attachment=True, download_name="ZAPIS_MECZU_szablon.xlsx",
+    meta_fields = [
+        ("Drużyna A (twoja)",     gtk_name),
+        ("Drużyna B (rywal)",     ""),
+        ("Data meczu",            ""),
+        ("Rozgrywki",             ""),
+        ("Runda / Kolejka",       ""),
+        ("Miejsce (dom/wyjazd)", "dom"),
+        ("Wynik A",               ""),
+        ("Wynik B",               ""),
+        ("Uwagi",                 ""),
+    ]
+    for i, (key, val) in enumerate(meta_fields):
+        r = i + 2
+        ka = ws_meta.cell(r, 1, key);  ka.fill = META_KEY; ka.font = Font(bold=True, size=10); ka.border = BD; ka.alignment = LEFT
+        vb = ws_meta.cell(r, 2, val);  vb.fill = META_VAL; vb.font = Font(size=10);            vb.border = BD; vb.alignment = LEFT
+        ws_meta.row_dimensions[r].height = 18
+
+    ws_meta.cell(12, 1, "Nazwa pliku: drużyna_a_drużyna_b").fill = META_INFO
+    ws_meta.cell(12, 1).font = Font(italic=True, size=9, color="555555")
+
+    # ── ARKUSZ KODY ───────────────────────────────────────────────────────────
+    KODY_DATA = [
+        ("SCORING",   "2",         "Celny za 2 punkty",               "rzut z gry za 2"),
+        ("SCORING",   "3",         "Celny za 3 punkty",               "rzut z gry za 3"),
+        ("SCORING",   "2+1",       "2 pkt + celny rzut wolny",        "faulowany i trafia RW"),
+        ("SCORING",   "2+0",       "2 pkt + niecelny rzut wolny",     "faulowany, chybia RW"),
+        ("SCORING",   "3+1",       "3 pkt + celny rzut wolny",        "faulowana trójka, trafia"),
+        ("SCORING",   "3+0",       "3 pkt + niecelny rzut wolny",     "faulowana trójka, chybia"),
+        ("SCORING",   "2D",        "Dobitka celna",                   "tip-in po chybieniu"),
+        ("SCORING",   "2D+1",      "Dobitka celna + faul (bez RW)",   ""),
+        ("SCORING",   "2D+0/1W",   "Dobitka celna + faul (0/1 RW)",   ""),
+        ("SCORING",   "2D+1/1W",   "Dobitka celna + faul (1/1 RW)",   ""),
+        ("CHYBIENIE", "0/2",       "Niecelny za 2 punkty",            "chybiony rzut z gry za 2"),
+        ("CHYBIENIE", "0/3",       "Niecelny za 3 punkty",            "chybiony rzut za 3"),
+        ("CHYBIENIE", "0/2D",      "Niecelna dobitka",                "chybiony tip-in"),
+        ("CHYBIENIE", "0D+0/2W",   "Niecelna dobitka + faul (0/2 RW)",""),
+        ("CHYBIENIE", "0D+1/2W",   "Niecelna dobitka + faul (1/2 RW)",""),
+        ("RW",        "1/2W",      "1/2 rzutów wolnych",              ""),
+        ("RW",        "2/2W",      "2/2 rzutów wolnych",              ""),
+        ("RW",        "0/2W",      "0/2 rzutów wolnych",              ""),
+        ("RW",        "1/3W",      "1/3 rzutów wolnych",              ""),
+        ("RW",        "2/3W",      "2/3 rzutów wolnych",              ""),
+        ("RW",        "3/3W",      "3/3 rzutów wolnych",              ""),
+        ("RW",        "0/3W",      "0/3 rzutów wolnych",              ""),
+        ("RW OSTATNI","1/2WL",     "1/2 RW — ostatni wolny serii",    ""),
+        ("RW OSTATNI","2/2WL",     "2/2 RW — ostatni wolny serii",    ""),
+        ("RW OSTATNI","0/2WL",     "0/2 RW — ostatni wolny serii",    ""),
+        ("RW TECH.",  "1/1WT",     "1/1 RW techniczny",               ""),
+        ("RW TECH.",  "0/1WT",     "0/1 RW techniczny",               ""),
+        ("INNE",      "BR",        "Strata / Ball Loss",              ""),
+        ("INNE",      "P",         "Przerwanie gry",                  "timeout, faul tech."),
+        ("INNE",      "F",         "Faul (bez punktów)",              ""),
+    ]
+
+    ws_k = wb.create_sheet("KODY")
+    ws_k.merge_cells("A1:E1")
+    t = ws_k["A1"]; t.value = "KODY AKCJI — ściągawka"
+    t.fill = HDR; t.font = HDR_F; t.alignment = CTR
+    ws_k.row_dimensions[1].height = 22
+
+    for ci, (col, w, lbl) in enumerate([("A",12,"Kategoria"),("B",14,"Kod"),("C",38,"Opis"),("D",36,"Przykład/uwagi"),("E",5,"")]):
+        ws_k.column_dimensions[col].width = w
+        c = ws_k.cell(2, ci+1, lbl if lbl else "")
+        c.fill = HDR; c.font = Font(color="FFFFFF", bold=True, size=9); c.alignment = CTR; c.border = BD
+
+    prev_cat = ""
+    for i, (cat, kod, opis, przyklad) in enumerate(KODY_DATA):
+        r = i + 3
+        bg = PatternFill("solid", fgColor="F8F8F8") if i%2==0 else PatternFill("solid", fgColor="FFFFFF")
+        cat_fill = PatternFill("solid", fgColor="E8F5E9") if cat != prev_cat else bg
+        for ci, val in enumerate([cat if cat != prev_cat else "", kod, opis, przyklad]):
+            c = ws_k.cell(r, ci+1, val)
+            c.fill = cat_fill if ci==0 else (PatternFill("solid",fgColor="FFF9C4") if ci==1 else bg)
+            c.font = Font(bold=True, size=9) if ci==1 else Font(size=9)
+            c.alignment = CTR if ci==1 else LEFT
+            c.border = BD
+        prev_cat = cat
+
+    ws_k.freeze_panes = "A3"
+
+    # ── ARKUSZE DANYCH ────────────────────────────────────────────────────────
+    COLS = [
+        ("A", "Kwarta\n(*= tip-off)",     10,  GREEN_H),
+        ("B", "Czas\n(sek.)",              8,  GREEN_H),
+        ("C", "Kod akcji",                18,  GREEN_H),
+        ("D", "Strefa",                    8,  YELLOW_H),
+        ("E", "1",                         7,  BLUE_H),
+        ("F", "2",                         7,  BLUE_H),
+        ("G", "3",                         7,  BLUE_H),
+        ("H", "4",                         7,  BLUE_H),
+        ("I", "5",                         7,  BLUE_H),
+        ("J", "Timeout\n(T=tak)",          9,  YELLOW_H),
+        ("K", "Kończy\nakcję",            10,  YELLOW_H),
+        ("L", "Asysta ★\n(nr)",            8,  TEAL_H),
+        ("M", "Zbiorka OFF ★\n(nr)",      10,  TEAL_H),
+        ("N", "Zbiorka DEF ★\n(nr)",      10,  TEAL_H),
+    ]
+
+    for team_name in [gtk_name, "drużyna_B"]:
+        ws = wb.create_sheet(team_name)
+
+        # Nagłówek tytułowy
+        ws.merge_cells("A1:N1")
+        t = ws["A1"]
+        t.value = f"ZAPIS MECZU — {team_name}"
+        t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=11); t.alignment = CTR
+        ws.row_dimensions[1].height = 20
+
+        # Nagłówki kolumn
+        for ci, (col, lbl, w, fill) in enumerate(COLS):
+            ws.column_dimensions[col].width = w
+            c = ws.cell(2, ci+1, lbl)
+            c.fill = fill; c.font = Font(bold=True, size=9); c.alignment = CTR; c.border = BD
+        ws.row_dimensions[2].height = 32
+
+        # 200 pustych wierszy danych
+        for r in range(3, 203):
+            for ci, (col, _, _, fill) in enumerate(COLS):
+                c = ws.cell(r, ci+1)
+                c.border = BD
+                c.alignment = CTR
+                # Kolumny A,B,C żółtawe, reszta białe
+                if col in ("A","B","C"):
+                    c.fill = PatternFill("solid", fgColor="FFFDE7")
+                elif col == "D":
+                    c.fill = PatternFill("solid", fgColor="F9FBE7")
+
+        ws.freeze_panes = "A3"
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True,
+                     download_name="ZAPIS_MECZU_szablon.xlsx",
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
