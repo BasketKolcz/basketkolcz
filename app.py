@@ -209,7 +209,7 @@ def parse_team_sheet(ws):
         raw_m = str(row[12]) if len(row)>12 and row[12] is not None else ""
         raw_n = str(row[13]) if len(row)>13 and row[13] is not None else ""
 
-        codes     = [c.strip() for c in raw_c.split(";") if c.strip()]
+        codes     = [c.strip().upper() for c in raw_c.split(";") if c.strip()]
         times     = [t.strip() for t in raw_b.replace(";",",").split(",") if t.strip()]
         finishers = [f.strip() for f in raw_k.split(";") if f.strip()]
         assists   = [a.strip() for a in raw_l.split(";") if a.strip()]
@@ -1019,7 +1019,7 @@ def validate_workbook(wb):
             if not any(v is not None for v in row[:4]): break
             raw_c = str(row[2]).strip() if row[2] is not None else ""
             if not raw_c: continue
-            for code in [c.strip() for c in raw_c.split(";") if c.strip()]:
+            for code in [c.strip().upper() for c in raw_c.split(";") if c.strip()]:
                 if code not in VALID_CODES:
                     if code not in unknown: unknown[code] = []
                     unknown[code].append(i)
@@ -1304,8 +1304,8 @@ def download_with_errors():
                     if not any(c.value is not None for c in row[:4]): break
                     raw_c = str(row[2].value).strip() if row[2].value is not None else ""
                     if not raw_c: continue
-                    bad_codes = [c.strip() for c in raw_c.split(";")
-                                 if c.strip() and c.strip() not in VALID_CODES]
+                    bad_codes = [c.strip().upper() for c in raw_c.split(";")
+                                 if c.strip() and c.strip().upper() not in VALID_CODES]
                     if bad_codes:
                         k = (sheet_name, i)
                         if k not in error_cells: error_cells[k] = []
@@ -1888,7 +1888,7 @@ def mecz(match_id):
             m3=td.get("made3",0); a3=td.get("att3",0)
             tot=m2+m3; att=a2+a3
             eff=f"{tot/att:.0%}" if att else "-"
-            rows += f"<tr><td><b>{b}</b></td><td>{m2}/{a2}</td><td>{m3}/{a3}</td><td><b>{eff}</b></td></tr>"
+            rows += f"<tr><td style=\"background:#fff\"><b>{b}</b></td><td>{m2}/{a2}</td><td>{m3}/{a3}</td><td><b>{eff}</b></td></tr>"
         return f"""<div class="table-responsive"><table class="table table-hover mb-0">
             <thead><tr><th>Czas</th><th>2PT</th><th>3PT</th><th>Eff%</th></tr></thead>
             <tbody>{rows}</tbody></table></div>"""
@@ -2071,7 +2071,7 @@ def mecz(match_id):
           </thead>
           <tbody>
             {''.join(f"""<tr style="background:{'#f9f9f9' if i%2==0 else '#fff'}">
-              <td class="fw-bold" style="font-size:.82rem">{b}</td>
+              <td class="fw-bold" style="font-size:.82rem;background:#fff">{b}</td>
               <td class="text-center" style="font-size:.82rem;background:#f0fff4">{(lambda gd: f"{gd.get('made2',0)+gd.get('made3',0)}/{gd.get('att2',0)+gd.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
               <td class="text-center" style="font-size:.85rem;font-weight:700;color:#1a6b3c;background:#f0fff4">{(lambda gd: f"{(gd.get('made2',0)+gd.get('made3',0))/(gd.get('att2',0)+gd.get('att3',0)):.0%}" if (gd.get('att2',0)+gd.get('att3',0)) else "—")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
               <td style="font-size:.75rem;color:#555;background:#f0fff4;text-align:center">{(lambda gd: f"{gd.get('made2',0)}/{gd.get('att2',0)} | {gd.get('made3',0)}/{gd.get('att3',0)}")(next((r for r in all_timing if r['druzyna']=='gtk' and r['bucket']==b),{}))}</td>
@@ -2405,7 +2405,7 @@ def sezon():
         gbar = int(ga/max_att*80) if ga else 0
         obar = int(oa/max_att*80) if oa else 0
         return f"""<tr>
-            <td class="fw-bold" style="font-size:.85rem">{bucket}</td>
+            <td class="fw-bold" style="font-size:.85rem;background:#fff">{bucket}</td>
             <td style="font-size:.8rem;background:#f0fff4;text-align:center">{gm}/{ga}</td>
             <td style="font-weight:700;color:#1a6b3c;background:#f0fff4;text-align:center">{ge}</td>
             <td style="font-size:.75rem;color:#555;background:#f0fff4;text-align:center">{gm2}/{ga2} | {gm3}/{ga3}</td>
