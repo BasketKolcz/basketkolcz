@@ -40,12 +40,18 @@ def init_db():
         data_meczu DATE,
         przeciwnik VARCHAR(100) NOT NULL,
         nazwa_gtk VARCHAR(100) DEFAULT '',
+        rozgrywki VARCHAR(100) DEFAULT '',
+        runda VARCHAR(50) DEFAULT '',
+        miejsce VARCHAR(20) DEFAULT '',
         wynik_gtk INTEGER DEFAULT 0,
         wynik_opp INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW()
     );
 
     ALTER TABLE matches ADD COLUMN IF NOT EXISTS nazwa_gtk VARCHAR(100) DEFAULT '';
+    ALTER TABLE matches ADD COLUMN IF NOT EXISTS rozgrywki VARCHAR(100) DEFAULT '';
+    ALTER TABLE matches ADD COLUMN IF NOT EXISTS runda VARCHAR(50) DEFAULT '';
+    ALTER TABLE matches ADD COLUMN IF NOT EXISTS miejsce VARCHAR(20) DEFAULT '';
 
     CREATE TABLE IF NOT EXISTS match_stats (
         id SERIAL PRIMARY KEY,
@@ -299,7 +305,8 @@ def calc_kpi(d):
         "ft_pct":pct(ftm,fta),
     }
 
-def save_match_to_db(przeciwnik, nazwa_gtk, sezon, data_meczu, stats_gtk, stats_opp):
+def save_match_to_db(przeciwnik, nazwa_gtk, sezon, data_meczu, stats_gtk, stats_opp,
+                     rozgrywki="", runda="", miejsce=""):
     db = get_db()
     cur = db.cursor()
     suma_gtk = suma_quarters(stats_gtk)
@@ -307,9 +314,11 @@ def save_match_to_db(przeciwnik, nazwa_gtk, sezon, data_meczu, stats_gtk, stats_
 
     # Wstaw mecz
     cur.execute("""
-        INSERT INTO matches (sezon, data_meczu, przeciwnik, nazwa_gtk, wynik_gtk, wynik_opp)
-        VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
-    """, (sezon, data_meczu, przeciwnik, nazwa_gtk, suma_gtk.get("pts",0), suma_opp.get("pts",0)))
+        INSERT INTO matches (sezon, data_meczu, przeciwnik, nazwa_gtk, rozgrywki, runda, miejsce, wynik_gtk, wynik_opp)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+    """, (sezon, data_meczu, przeciwnik, nazwa_gtk,
+          rozgrywki or "", runda or "", miejsce or "",
+          suma_gtk.get("pts",0), suma_opp.get("pts",0)))
     match_id = cur.fetchone()["id"]
 
     # Statystyki per kwarta
@@ -524,14 +533,49 @@ body{margin:0;background:var(--bg);font-family:'Segoe UI',system-ui,sans-serif;f
    RESPONSIVE BREAKPOINTS
 ══════════════════════════════════════════ */
 
-/* Tablet (< 992px) — sidebar zwężony */
+/* ══════════════════════════════════════════
+   RESPONSIVE BREAKPOINTS
+══════════════════════════════════════════ */
+
+/* Tablet / pół ekranu (< 992px) — sidebar tylko ikony */
 @media(max-width:991px){
-  .sidebar{width:60px}
+  .sidebar{width:56px}
+  .sidebar-logo{padding:.75rem 0;text-align:center}
   .sidebar .brand-text,.sidebar .sub,
-  .nav-section,.nav-item-link span,
-  .nav-season{display:none}
-  .nav-item-link{justify-content:center;padding:.6rem;margin:2px 4px}
-  .main-content{margin-left:60px;padding:1.25rem 1rem}
+  .nav-section,.nav-season{display:none}
+  .nav-item-link span.brand-text{display:none}
+  .nav-item-link{
+    justify-content:center;
+    padding:.65rem 0;
+    margin:2px 6px;
+    border-radius:8px;
+    position:relative;
+  }
+  .nav-item-link .icon{
+    width:28px;height:28px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:1.2rem;
+    margin:0;
+  }
+  /* Tooltip przy hover */
+  .nav-item-link::after{
+    content:attr(data-label);
+    position:absolute;left:62px;top:50%;transform:translateY(-50%);
+    background:#1a2b4a;color:#fff;
+    font-size:.75rem;font-weight:600;
+    padding:4px 10px;border-radius:6px;
+    white-space:nowrap;pointer-events:none;
+    opacity:0;transition:opacity .15s;
+    box-shadow:0 2px 8px rgba(0,0,0,.25);
+    z-index:9999;
+  }
+  .nav-item-link:hover::after{opacity:1}
+  .nav-item-link.active .icon{
+    background:#EF9F2720;border-radius:6px;
+  }
+  .main-content{margin-left:56px;padding:1.25rem 1rem}
+  /* Logo — tylko kropka */
+  .sidebar-logo .brand{font-size:1.2rem;text-align:center;display:block}
 }
 
 /* Mobile (< 768px) — sidebar chowana, topbar widoczny */
@@ -541,7 +585,12 @@ body{margin:0;background:var(--bg);font-family:'Segoe UI',system-ui,sans-serif;f
   .sidebar .brand-text,.sidebar .sub,
   .nav-section,.nav-item-link span,
   .nav-season{display:block}
-  .nav-item-link{justify-content:flex-start;padding:.58rem .9rem;margin:1px .5rem}
+  .nav-item-link{
+    justify-content:flex-start;
+    padding:.58rem .9rem;margin:1px .5rem;
+  }
+  .nav-item-link::after{display:none}
+  .nav-item-link .icon{width:20px;height:auto;font-size:.95rem}
   .topbar{display:flex}
   .main-content{margin-left:0;padding:4.5rem 1rem 1.5rem}
   .hero{padding:1rem 1.1rem}
@@ -583,7 +632,7 @@ def nav(active="home"):
     links = ""
     for key, href, icon, label in items:
         cls = "nav-item-link active" if active==key else "nav-item-link"
-        links += (f'<a href="{href}" class="{cls}">'
+        links += (f'<a href="{href}" class="{cls}" data-label="{label}">'
                   f'<span class="icon">{icon}</span>'
                   f'<span class="brand-text">{label}</span></a>')
 
@@ -679,7 +728,7 @@ def index():
     recent = []
     try:
         db = get_db(); cur = db.cursor()
-        cur.execute("""SELECT id,data_meczu,przeciwnik,wynik_gtk,wynik_opp
+        cur.execute("""SELECT id,data_meczu,przeciwnik,rozgrywki,runda,miejsce,wynik_gtk,wynik_opp
                        FROM matches WHERE sezon=%s ORDER BY created_at DESC LIMIT 5""", (season,))
         recent = cur.fetchall(); cur.close()
     except: pass
@@ -690,12 +739,17 @@ def index():
         if m['wynik_gtk'] > m['wynik_opp']:   badge = '<span class="badge-win">W</span>'
         elif m['wynik_gtk'] < m['wynik_opp']: badge = '<span class="badge-loss">L</span>'
         else:                                  badge = '<span class="badge-draw">D</span>'
-        dt = m['data_meczu'].strftime('%d.%m.%Y') if m['data_meczu'] else \
-             '<span style="color:#ccc;font-size:.75rem">brak daty</span>'
+        dt       = m['data_meczu'].strftime('%d.%m.%Y') if m['data_meczu'] else '—'
+        rozg     = m.get('rozgrywki','') or '—'
+        runda    = m.get('runda','') or '—'
+        miejsce  = m.get('miejsce','') or '—'
         recent_rows += f"""<tr>
             <td>{badge}</td>
-            <td style="font-size:.8rem;color:#666">{dt}</td>
+            <td style="font-size:.8rem;color:#555">{dt}</td>
+            <td style="font-size:.78rem;color:#888">{rozg}</td>
+            <td style="font-size:.78rem;color:#888">{runda}</td>
             <td><a href="/mecz/{m['id']}" class="fw-bold text-decoration-none" style="color:#1a2b4a">{m['przeciwnik']}</a></td>
+            <td style="font-size:.78rem;color:#888">{miejsce}</td>
             <td class="text-center fw-bold">{wynik}</td>
         </tr>"""
 
@@ -736,7 +790,7 @@ def index():
 <div class="col-lg-5">
   <div class="card p-3">
     <div class="section-hdr">Ostatnie mecze — {season}</div>
-    {'<p class="text-muted" style="font-size:.82rem">Brak meczów w tym sezonie</p>' if not recent_rows else f'<div class="table-responsive"><table class="table table-hover mb-0"><thead><tr><th></th><th>Data</th><th>Przeciwnik</th><th class="text-center">Wynik</th></tr></thead><tbody>{recent_rows}</tbody></table></div>'}
+    {'<p class="text-muted" style="font-size:.82rem">Brak meczów w tym sezonie</p>' if not recent_rows else f'<div class="table-responsive"><table class="table table-hover mb-0"><thead><tr><th style="width:36px"></th><th>Data</th><th>Rozgrywki</th><th>Runda</th><th>Przeciwnik</th><th>Miejsce</th><th class="text-center">Wynik</th></tr></thead><tbody>{recent_rows}</tbody></table></div>'}
     <div class="mt-2">
       <a href="/historia" class="btn btn-outline-primary btn-sm w-100">Zobacz wszystkie mecze →</a>
     </div>
@@ -767,17 +821,24 @@ def read_meta(wb):
     for sn in wb.sheetnames:
         if sn.upper() == "META":
             ws = wb[sn]
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                if not row[0]: continue
-                key = str(row[0]).strip().lower()
-                val = str(row[1]).strip() if row[1] is not None else ""
+            for row in ws.iter_rows(min_row=2, values_only=False):
+                if not row[0].value: continue
+                key = str(row[0].value).strip().lower()
+                # Obsłuż datetime z Excela
+                raw_val = row[1].value if len(row) > 1 else None
+                from datetime import datetime as _dt, date as _date
+                if isinstance(raw_val, (_dt, _date)):
+                    val = raw_val  # zachowaj jako obiekt — obsłużony w _do_save
+                else:
+                    val = str(raw_val).strip() if raw_val is not None else ""
                 if "drużyna a" in key or "druzyna a" in key: meta["nazwa_a"] = val
                 if "drużyna b" in key or "druzyna b" in key: meta["nazwa_b"] = val
-                if "wynik a"   in key: meta["wynik_a"] = val
-                if "wynik b"   in key: meta["wynik_b"] = val
-                if "data"      in key: meta["data"] = val
+                if "wynik a"   in key: meta["wynik_a"] = str(val) if val else ""
+                if "wynik b"   in key: meta["wynik_b"] = str(val) if val else ""
+                if "data"      in key: meta["data"] = raw_val  # surowa wartość
                 if "rozgrywki" in key: meta["rozgrywki"] = val
                 if "runda"     in key or "kolejka" in key: meta["runda"] = val
+                if "miejsce"   in key: meta["miejsce"] = val
             break
     return meta
 
@@ -947,19 +1008,40 @@ def _do_save(wb, name_gtk, name_opp, sezon, data_meczu):
     if display_gtk in ("TWOJA_DRUZYNA","TWOJA_DRUŻYNA","-",""): display_gtk = name_gtk
     if display_opp in ("RYWAL","-",""): display_opp = name_opp
 
-    # Data z META jeśli nie podana
-    if not data_meczu and meta.get("data"):
-        raw = str(meta["data"]).strip().replace(" ","")
-        for fmt in ('%d.%m.%Y','%d/%m/%Y','%Y-%m-%d','%d-%m-%Y','%Y.%m.%d'):
-            try:
-                from datetime import datetime as dt2
-                data_meczu = dt2.strptime(raw, fmt).strftime('%Y-%m-%d')
-                break
-            except: pass
+    # Data — META ma priorytet nad formularzem
+    meta_data = meta.get("data")
+    if meta_data:
+        from datetime import datetime as dt2, date
+        # Jeśli Excel zwrócił obiekt datetime/date
+        if isinstance(meta_data, (dt2, date)):
+            data_meczu = meta_data.strftime('%Y-%m-%d') if isinstance(meta_data, dt2) else meta_data.isoformat()
+        else:
+            raw = str(meta_data).strip().replace(" ","").replace("\n","")
+            # Spróbuj różnych formatów daty
+            parsed = None
+            for fmt in ('%d.%m.%Y','%d/%m/%Y','%Y-%m-%d','%d-%m-%Y',
+                        '%Y.%m.%d','%d.%m.%y','%d/%m/%y'):
+                try:
+                    parsed = dt2.strptime(raw, fmt).strftime('%Y-%m-%d')
+                    break
+                except: pass
+            if parsed:
+                data_meczu = parsed
+            # Jeśli nie udało się sparsować — zostaw datę z formularza
+    
+    # Sezon z META jeśli dostępny
+    if meta.get("rozgrywki") and not sezon:
+        sezon = meta["rozgrywki"]
 
     stats_gtk = parse_team_sheet(wb[name_gtk])
     stats_opp = parse_team_sheet(wb[name_opp])
-    match_id  = save_match_to_db(display_opp, display_gtk, sezon, data_meczu, stats_gtk, stats_opp)
+    match_id  = save_match_to_db(
+        display_opp, display_gtk, sezon, data_meczu,
+        stats_gtk, stats_opp,
+        rozgrywki=str(meta.get("rozgrywki","") or ""),
+        runda=str(meta.get("runda","") or ""),
+        miejsce=str(meta.get("miejsce","") or ""),
+    )
     session.clear()
     session["last_match_id"] = match_id
     flash(f"✓ Mecz {display_gtk} vs {display_opp} zapisany pomyślnie!","success")
@@ -1474,20 +1556,25 @@ def historia():
     rows = ""
     for i, m in enumerate(matches):
         wynik = f"{m['wynik_gtk']} : {m['wynik_opp']}"
-        if m['wynik_gtk'] > m['wynik_opp']:   badge = '<span class="badge-win">WYGRANA</span>'
-        elif m['wynik_gtk'] < m['wynik_opp']: badge = '<span class="badge-loss">PRZEGRANA</span>'
-        else:                                  badge = '<span class="badge-draw">REMIS</span>'
-        dt = m['data_meczu'].strftime('%d.%m.%Y') if m['data_meczu'] else "-"
+        if m['wynik_gtk'] > m['wynik_opp']:   badge = '<span class="badge-win">W</span>'
+        elif m['wynik_gtk'] < m['wynik_opp']: badge = '<span class="badge-loss">P</span>'
+        else:                                  badge = '<span class="badge-draw">R</span>'
+        dt      = m['data_meczu'].strftime('%d.%m.%Y') if m['data_meczu'] else '—'
+        rozg    = m.get('rozgrywki','') or '—'
+        runda   = m.get('runda','') or '—'
+        miejsce = m.get('miejsce','') or '—'
         bg = "background:#f8f9ff" if i%2==0 else ""
         rows += f"""<tr style="{bg}">
-            <td>{badge}</td>
-            <td style="font-size:.8rem;color:#888">{dt}</td>
+            <td style="width:44px">{badge}</td>
+            <td style="font-size:.82rem;font-weight:600">{dt}</td>
+            <td style="font-size:.78rem;color:#666">{rozg}</td>
+            <td style="font-size:.78rem;color:#666">{runda}</td>
             <td><a href="/mecz/{m['id']}" class="fw-bold text-decoration-none" style="color:#1a2b4a">{m['przeciwnik']}</a></td>
-            <td class="text-center"><span style="font-size:1rem;font-weight:700">{wynik}</span></td>
-            <td class="text-center" style="font-size:.8rem;color:#888">{m['sezon']}</td>
+            <td style="font-size:.78rem;color:#666">{miejsce}</td>
+            <td class="text-center"><span style="font-size:.95rem;font-weight:700">{wynik}</span></td>
             <td class="text-center">
-              <a href="/mecz/{m['id']}" class="btn btn-outline-primary btn-sm" style="font-size:.75rem">Raport</a>
-              <a href="/mecz/{m['id']}/delete" class="btn btn-outline-danger btn-sm ms-1" style="font-size:.75rem"
+              <a href="/mecz/{m['id']}" class="btn btn-outline-primary btn-sm" style="font-size:.72rem">Raport</a>
+              <a href="/mecz/{m['id']}/delete" class="btn btn-outline-danger btn-sm ms-1" style="font-size:.72rem"
                  onclick="return confirm('Usunąć ten mecz?')">✕</a>
             </td>
         </tr>"""
@@ -1513,11 +1600,17 @@ def historia():
     <div class="table-responsive">
       <table class="table table-hover mb-0">
         <thead><tr>
-          <th>Wynik</th><th>Data</th><th>Przeciwnik</th>
-          <th class="text-center">Punkty</th><th class="text-center">Sezon</th><th class="text-center">Akcje</th>
+          <th style="width:44px"></th>
+          <th>Data</th>
+          <th>Rozgrywki</th>
+          <th>Runda/Kolejka</th>
+          <th>Przeciwnik</th>
+          <th>Miejsce</th>
+          <th class="text-center">Wynik</th>
+          <th class="text-center">Akcje</th>
         </tr></thead>
         <tbody>
-          {rows if rows else '<tr><td colspan="6" class="text-center text-muted py-4">Brak meczów — wgraj pierwszy plik zapis.xlsx</td></tr>'}
+          {rows if rows else '<tr><td colspan="8" class="text-center text-muted py-4">Brak meczów — wgraj pierwszy plik zapis.xlsx</td></tr>'}
         </tbody>
       </table>
     </div>
