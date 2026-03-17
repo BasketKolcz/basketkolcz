@@ -728,8 +728,18 @@ def index():
     recent = []
     try:
         db = get_db(); cur = db.cursor()
-        cur.execute("""SELECT id,data_meczu,przeciwnik,rozgrywki,runda,miejsce,wynik_gtk,wynik_opp
-                       FROM matches WHERE sezon=%s ORDER BY created_at DESC LIMIT 5""", (season,))
+        try:
+            cur.execute("""SELECT id,data_meczu,przeciwnik,
+                           COALESCE(rozgrywki,'') as rozgrywki,
+                           COALESCE(runda,'') as runda,
+                           COALESCE(miejsce,'') as miejsce,
+                           wynik_gtk,wynik_opp
+                           FROM matches WHERE sezon=%s ORDER BY created_at DESC LIMIT 5""", (season,))
+        except:
+            cur.execute("""SELECT id,data_meczu,przeciwnik,
+                           ''::text as rozgrywki,''::text as runda,''::text as miejsce,
+                           wynik_gtk,wynik_opp
+                           FROM matches WHERE sezon=%s ORDER BY created_at DESC LIMIT 5""", (season,))
         recent = cur.fetchall(); cur.close()
     except: pass
 
@@ -1540,13 +1550,31 @@ def upload_force():
 
 @app.route("/historia")
 def historia():
+    try: init_db()
+    except: pass
     sezon_filter = request.args.get("sezon","")
     db = get_db(); cur = db.cursor()
 
-    if sezon_filter:
-        cur.execute("SELECT * FROM matches WHERE sezon=%s ORDER BY created_at DESC", (sezon_filter,))
-    else:
-        cur.execute("SELECT * FROM matches ORDER BY created_at DESC")
+    try:
+        if sezon_filter:
+            cur.execute("""SELECT id,sezon,data_meczu,przeciwnik,
+                           COALESCE(rozgrywki,'') as rozgrywki,
+                           COALESCE(runda,'') as runda,
+                           COALESCE(miejsce,'') as miejsce,
+                           wynik_gtk,wynik_opp,created_at
+                           FROM matches WHERE sezon=%s ORDER BY created_at DESC""", (sezon_filter,))
+        else:
+            cur.execute("""SELECT id,sezon,data_meczu,przeciwnik,
+                           COALESCE(rozgrywki,'') as rozgrywki,
+                           COALESCE(runda,'') as runda,
+                           COALESCE(miejsce,'') as miejsce,
+                           wynik_gtk,wynik_opp,created_at
+                           FROM matches ORDER BY created_at DESC""")
+    except:
+        if sezon_filter:
+            cur.execute("SELECT *,''::text as rozgrywki,''::text as runda,''::text as miejsce FROM matches WHERE sezon=%s ORDER BY created_at DESC", (sezon_filter,))
+        else:
+            cur.execute("SELECT *,''::text as rozgrywki,''::text as runda,''::text as miejsce FROM matches ORDER BY created_at DESC")
     matches = cur.fetchall()
 
     cur.execute("SELECT DISTINCT sezon FROM matches ORDER BY sezon DESC")
