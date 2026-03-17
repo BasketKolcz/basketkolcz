@@ -11,7 +11,20 @@ from datetime import datetime
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "basketkolcz2025secret")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB max upload
+app.config["SESSION_COOKIE_SIZE_LIMIT"] = None
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+
+# Użyj serwera do przechowywania sesji (nie ciasteczka)
+# Render ma /tmp dostępne
+app.config["SESSION_TYPE"] = "filesystem"
+app.config["SESSION_FILE_DIR"] = "/tmp/flask_sessions"
+os.makedirs("/tmp/flask_sessions", exist_ok=True)
+
+try:
+    from flask_session import Session
+    Session(app)
+except ImportError:
+    pass  # Fallback do cookie session
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -937,12 +950,9 @@ def _do_save(wb, name_gtk, name_opp, sezon, data_meczu):
     stats_gtk = parse_team_sheet(wb[name_gtk])
     stats_opp = parse_team_sheet(wb[name_opp])
     match_id  = save_match_to_db(name_opp, sezon, data_meczu, stats_gtk, stats_opp)
-    session["match_id"]  = match_id
-    session["name_gtk"]  = name_gtk
-    session["name_opp"]  = name_opp
-    # Wyczyść pending
-    for k in ["pending_token","pending_sezon","pending_data_meczu","validation_report"]:
-        session.pop(k, None)
+    # Wyczyść całą sesję — zostaw tylko match_id
+    session.clear()
+    session["last_match_id"] = match_id
     flash(f"✓ Mecz {name_gtk} vs {name_opp} zapisany pomyślnie!","success")
     return redirect(url_for("mecz", match_id=match_id))
 
@@ -982,13 +992,17 @@ def upload():
                 fp.write(file_bytes)
 
             # Zapisz tylko lekkie dane w sesji (bez pliku!)
+            # Zapisz TYLKO niezbędne lekkie dane w sesji
+            import re as _re
+            def strip_html(s): return _re.sub(r'<[^>]+>', '', str(s))[:200]
+
             session["pending_token"]      = token
             session["pending_sezon"]      = sezon
             session["pending_data_meczu"] = data_meczu
             session["validation_report"]  = {
-                "errors":   report["errors"],
-                "warnings": report["warnings"],
-                "info":     report["info"],
+                "errors":   [strip_html(e) for e in report["errors"][:10]],
+                "warnings": [strip_html(w) for w in report["warnings"][:10]],
+                "info":     [strip_html(i) for i in report["info"][:10]],
                 "names":    list(report["names"]),
                 "pts":      list(report["pts"]),
             }
