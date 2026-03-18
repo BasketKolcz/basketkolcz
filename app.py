@@ -125,6 +125,9 @@ def init_db():
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS runda VARCHAR(50) DEFAULT ''",
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS miejsce VARCHAR(20) DEFAULT ''",
         "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS roster_id INTEGER REFERENCES roster(id) ON DELETE SET NULL",
+        "ALTER TABLE timing_stats ADD COLUMN IF NOT EXISTS kwarta INTEGER DEFAULT 0",
+        "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS time_sum REAL DEFAULT 0",
+        "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS time_cnt INTEGER DEFAULT 0",
         """CREATE TABLE IF NOT EXISTS score_flow (
             id SERIAL PRIMARY KEY,
             match_id INTEGER REFERENCES matches(id) ON DELETE CASCADE,
@@ -197,7 +200,7 @@ def parse_team_sheet(ws):
     stats = {
         "quarter": defaultdict(lambda: {"ftm":0,"fta":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"br":0,"fd":0,"poss":0,"pts":0}),
         "players": defaultdict(lambda: {"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"fd":0,"br":0,"finishes":0,"ast":0,"oreb":0,"dreb":0}),
-        "timing":  {b: {"2PT":{"made":0,"miss":0},"3PT":{"made":0,"miss":0}} for b in BUCKETS},
+        "timing":  {q: {b: {"2PT":{"made":0,"miss":0},"3PT":{"made":0,"miss":0}} for b in BUCKETS} for q in [0,1,2,3,4]},
         "lineups": defaultdict(lambda: {"pts":0,"poss":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"br":0,"fd":0}),
         "flow":    [],  # lista (kwarta, czas_sek, pts_skumulowane) — każda akcja punktująca
     }
@@ -255,49 +258,63 @@ def parse_team_sheet(ws):
 
             finisher = None
             if ai < len(finishers):
-                try: finisher = int(finishers[ai])
+                try: finisher = int(str(finishers[ai]).strip().lstrip('#'))
                 except: pass
 
             assister = None
             if ai < len(assists):
-                try: assister = int(assists[ai])
+                try: assister = int(str(assists[ai]).strip().lstrip('#'))
                 except: pass
 
             orebler = None
             if ai < len(orebs):
-                try: orebler = int(orebs[ai])
+                try: orebler = int(str(orebs[ai]).strip().lstrip('#'))
                 except: pass
 
             drebler = None
             if ai < len(drebs):
-                try: drebler = int(drebs[ai])
+                try: drebler = int(str(drebs[ai]).strip().lstrip('#'))
                 except: pass
 
             pts = 0
 
             if code in ACTION_2PM:
                 q["p2m"]+=1; q["p2a"]+=1; pts=2
-                stats["timing"][bucket]["2PT"]["made"]+=1
+                stats["timing"][current_q][bucket]["2PT"]["made"]+=1
                 if finisher is not None:
                     stats["players"][finisher]["p2m"]+=1; stats["players"][finisher]["p2a"]+=1
                     stats["players"][finisher]["finishes"]+=1
+                    if t_val > 0:
+                        stats["players"][finisher]["time_sum"] = stats["players"][finisher].get("time_sum",0) + t_val
+                        stats["players"][finisher]["time_cnt"] = stats["players"][finisher].get("time_cnt",0) + 1
                     if assister is not None: stats["players"][assister]["ast"]+=1
             elif code in ("0/2","0/2D","0D+0/2W","0D+1/2W"):
                 q["p2a"]+=1
-                stats["timing"][bucket]["2PT"]["miss"]+=1
-                if finisher is not None: stats["players"][finisher]["p2a"]+=1; stats["players"][finisher]["finishes"]+=1
+                stats["timing"][current_q][bucket]["2PT"]["miss"]+=1
+                if finisher is not None:
+                    stats["players"][finisher]["p2a"]+=1; stats["players"][finisher]["finishes"]+=1
+                    if t_val > 0:
+                        stats["players"][finisher]["time_sum"] = stats["players"][finisher].get("time_sum",0) + t_val
+                        stats["players"][finisher]["time_cnt"] = stats["players"][finisher].get("time_cnt",0) + 1
                 if orebler is not None: stats["players"][orebler]["oreb"]+=1
             elif code in ACTION_3PM:
                 q["p3m"]+=1; q["p3a"]+=1; pts=3
-                stats["timing"][bucket]["3PT"]["made"]+=1
+                stats["timing"][current_q][bucket]["3PT"]["made"]+=1
                 if finisher is not None:
                     stats["players"][finisher]["p3m"]+=1; stats["players"][finisher]["p3a"]+=1
                     stats["players"][finisher]["finishes"]+=1
+                    if t_val > 0:
+                        stats["players"][finisher]["time_sum"] = stats["players"][finisher].get("time_sum",0) + t_val
+                        stats["players"][finisher]["time_cnt"] = stats["players"][finisher].get("time_cnt",0) + 1
                     if assister is not None: stats["players"][assister]["ast"]+=1
             elif code == "0/3":
                 q["p3a"]+=1
-                stats["timing"][bucket]["3PT"]["miss"]+=1
-                if finisher is not None: stats["players"][finisher]["p3a"]+=1; stats["players"][finisher]["finishes"]+=1
+                stats["timing"][current_q][bucket]["3PT"]["miss"]+=1
+                if finisher is not None:
+                    stats["players"][finisher]["p3a"]+=1; stats["players"][finisher]["finishes"]+=1
+                    if t_val > 0:
+                        stats["players"][finisher]["time_sum"] = stats["players"][finisher].get("time_sum",0) + t_val
+                        stats["players"][finisher]["time_cnt"] = stats["players"][finisher].get("time_cnt",0) + 1
                 if orebler is not None: stats["players"][orebler]["oreb"]+=1
             elif code in ACTION_BR:
                 q["br"]+=1
@@ -416,26 +433,30 @@ def save_match_to_db(przeciwnik, nazwa_gtk, sezon, data_meczu, stats_gtk, stats_
         for nr, pd in stats["players"].items():
             pts = pd.get("p2m",0)*2 + pd.get("p3m",0)*3 + pd.get("ftm",0)
             cur.execute("""
-                INSERT INTO player_stats (match_id,druzyna,nr,pts,p2m,p2a,p3m,p3a,ftm,fta,ast,oreb,dreb,br,fd,finishes)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                INSERT INTO player_stats (match_id,druzyna,nr,pts,p2m,p2a,p3m,p3a,ftm,fta,ast,oreb,dreb,br,fd,finishes,time_sum,time_cnt)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (match_id, druzyna, int(nr), pts,
                   pd.get("p2m",0), pd.get("p2a",0),
                   pd.get("p3m",0), pd.get("p3a",0),
                   pd.get("ftm",0), pd.get("fta",0),
                   pd.get("ast",0), pd.get("oreb",0),
                   pd.get("dreb",0), pd.get("br",0),
-                  pd.get("fd",0), pd.get("finishes",0)))
+                  pd.get("fd",0), pd.get("finishes",0),
+                  pd.get("time_sum",0), pd.get("time_cnt",0)))
 
-    # Shot timing
+    # Shot timing per kwarta
     for druzyna, stats in [("gtk", stats_gtk), ("opp", stats_opp)]:
-        for b in BUCKETS:
-            td = stats["timing"][b]
-            cur.execute("""
-                INSERT INTO timing_stats (match_id,druzyna,bucket,made2,att2,made3,att3)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
-            """, (match_id, druzyna, b,
-                  td["2PT"]["made"], td["2PT"]["made"]+td["2PT"]["miss"],
-                  td["3PT"]["made"], td["3PT"]["made"]+td["3PT"]["miss"]))
+        for q in [0,1,2,3,4]:
+            for b in BUCKETS:
+                td = stats["timing"][q][b]
+                if (td["2PT"]["made"]+td["2PT"]["miss"]+td["3PT"]["made"]+td["3PT"]["miss"]) == 0:
+                    continue
+                cur.execute("""
+                    INSERT INTO timing_stats (match_id,druzyna,bucket,kwarta,made2,att2,made3,att3)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (match_id, druzyna, b, q,
+                      td["2PT"]["made"], td["2PT"]["made"]+td["2PT"]["miss"],
+                      td["3PT"]["made"], td["3PT"]["made"]+td["3PT"]["miss"]))
 
     # Piątki (lineup stats) — GTK OFF
     for lineup_key, ld in stats_gtk["lineups"].items():
@@ -1192,6 +1213,88 @@ def validate_workbook(wb):
         else:
             info.append(f"✓ {sheet_name}: wszystkie kody akcji są prawidłowe")
 
+    # ── 6. Finishery (kolumna K) ──────────────────────────────────────────
+    for sheet_name in [name_a, name_b]:
+        ws = wb[sheet_name]
+        total_actions = 0
+        missing_fin = 0
+        hash_prefix = 0
+        for i, row in enumerate(ws.iter_rows(min_row=2, max_row=500, values_only=True), 2):
+            if not any(v is not None for v in row[:4]): break
+            raw_c = str(row[2]).strip() if row[2] is not None else ""
+            if not raw_c: continue
+            codes = [c.strip() for c in raw_c.split(";") if c.strip()]
+            fins  = str(row[10]).strip().split(";") if row[10] is not None else []
+            for ai, code in enumerate(codes):
+                if code in ("BR","P","F"): continue  # nie wymagają finishera
+                total_actions += 1
+                fin_raw = fins[ai].strip() if ai < len(fins) else ""
+                if not fin_raw:
+                    missing_fin += 1
+                elif "#" in fin_raw:
+                    hash_prefix += 1
+        if hash_prefix > 0:
+            warnings.append(
+                f"⚠️ {sheet_name} — finishery (kol K) mają prefix '#' ({hash_prefix} akcji). "
+                f"Parser usunie '#' automatycznie — dane zawodników zostaną wczytane."
+            )
+        elif total_actions > 0 and missing_fin == total_actions:
+            warnings.append(
+                f"⚠️ {sheet_name} — brak finisherów (kol K pusta). "
+                f"Statystyki per zawodnik i timing nie będą dostępne."
+            )
+        elif missing_fin > 0:
+            warnings.append(
+                f"⚠️ {sheet_name} — brak finishera w {missing_fin}/{total_actions} akcjach. "
+                f"Niektóre statystyki zawodników mogą być niepełne."
+            )
+        else:
+            if total_actions > 0:
+                info.append(f"✓ {sheet_name}: finishery kompletne ({total_actions} akcji)")
+
+    # ── 7. Asysty i zbiórki ────────────────────────────────────────────────
+    ws_a = wb[name_a]
+    has_ast = has_oreb = has_dreb = False
+    for row in ws_a.iter_rows(min_row=2, max_row=500, values_only=True):
+        if not any(v is not None for v in row[:4]): break
+        if row[11] is not None and str(row[11]).strip(): has_ast = True
+        if row[12] is not None and str(row[12]).strip(): has_oreb = True
+        if row[13] is not None and str(row[13]).strip(): has_dreb = True
+    missing_cols = []
+    if not has_ast:  missing_cols.append("Asysta (kol L)")
+    if not has_oreb: missing_cols.append("Zbiórkа OFF (kol M)")
+    if not has_dreb: missing_cols.append("Zbiórkа DEF (kol N)")
+    if missing_cols:
+        warnings.append(
+            f"⚠️ {name_a} — brak danych: {', '.join(missing_cols)}. "
+            f"Statystyki AST/OREB/DREB będą wynosiły 0."
+        )
+    else:
+        info.append(f"✓ {name_a}: asysty i zbiórki są wypełnione")
+
+    # ── 8. Arkusz META — kompletność ──────────────────────────────────────
+    meta_missing = []
+    if not meta.get("data"):       meta_missing.append("data meczu")
+    if not meta.get("wynik_a"):    meta_missing.append("wynik A")
+    if not meta.get("wynik_b"):    meta_missing.append("wynik B")
+    if not meta.get("rozgrywki"):  meta_missing.append("rozgrywki")
+    if not meta.get("runda"):      meta_missing.append("runda/kolejka")
+    if not meta.get("miejsce"):    meta_missing.append("miejsce")
+    if meta_missing:
+        warnings.append(
+            f"⚠️ META — brakujące pola: {', '.join(meta_missing)}. "
+            f"Mecz zostanie zapisany bez tych danych."
+        )
+    else:
+        info.append(f"✓ META: wszystkie pola wypełnione")
+
+    # ── 9. Liczba wierszy z danymi ─────────────────────────────────────────
+    for sheet_name in [name_a, name_b]:
+        ws = wb[sheet_name]
+        n_rows = sum(1 for row in ws.iter_rows(min_row=2, max_row=1000, values_only=True)
+                     if any(v is not None and str(v).strip() for v in row[:4]))
+        info.append(f"✓ {sheet_name}: {n_rows} zakodowanych posiadań")
+
     return {
         "errors":   errors,
         "warnings": warnings,
@@ -1332,8 +1435,8 @@ def upload():
             session["pd"] = data_meczu or ""
             session["vr"] = {
                 "e": [clean(e) for e in report["errors"][:8]],
-                "w": [clean(w) for w in report["warnings"][:8]],
-                "i": [clean(i) for i in report["info"][:6]],
+                "w": [clean(w) for w in report["warnings"][:15]],
+                "i": [clean(i) for i in report["info"][:15]],
                 "n": list(report["names"]),
                 "p": list(report["pts"]),
             }
@@ -1376,8 +1479,8 @@ def upload():
             session["pd"] = data_meczu or ""
             session["vr"] = {
                 "e": [clean(e) for e in report["errors"][:8]],
-                "w": [clean(w) for w in report["warnings"][:8]],
-                "i": [clean(i) for i in report["info"][:6]],
+                "w": [clean(w) for w in report["warnings"][:15]],
+                "i": [clean(i) for i in report["info"][:15]],
                 "n": list(report["names"]),
                 "p": list(report["pts"]),
             }
@@ -2199,6 +2302,9 @@ def mecz(match_id):
                 id_cell = f'<td class="fw-bold">#{pd["nr"]} {roster_map[pd["id"]]}</td>'
             else:
                 id_cell = f'<td class="fw-bold">#{pd["nr"]}</td>'
+            tsum = float(pd.get("time_sum") or 0)
+            tcnt = int(pd.get("time_cnt") or 0)
+            avg_t = f"{tsum/tcnt:.1f}s" if tcnt else "—"
             rows += f"""<tr>
                 {id_cell}
                 <td class="fw-bold" style="color:#1a2b4a">{pd.get('pts',0)}</td>
@@ -2207,13 +2313,14 @@ def mecz(match_id):
                 <td>{ftm}/{fta}</td>
                 <td><b>{efg}</b></td><td>{ts}</td>
                 <td><b>{usg}</b></td>
+                <td>{avg_t}</td>
                 <td>{pd.get('ast',0)}</td><td>{pd.get('oreb',0)}</td>
                 <td>{pd.get('dreb',0)}</td><td>{pd.get('br',0)}</td>
                 <td>{pd.get('finishes',0)}</td>
             </tr>"""
         hdr_id = "Zawodnik" if druzyna == "gtk" and roster_map else "#"
         return f"""<div class="table-responsive"><table class="table table-hover mb-0">
-            <thead><tr><th>{hdr_id}</th><th>PTS</th><th>2PM/A</th><th>3PM/A</th><th>FTM/A</th><th>eFG%</th><th>TS%</th><th>USG%</th><th>AST</th><th>OREB</th><th>DREB</th><th>BR</th><th>FIN</th></tr></thead>
+            <thead><tr><th>{hdr_id}</th><th>PTS</th><th>2PM/A</th><th>3PM/A</th><th>FTM/A</th><th>eFG%</th><th>TS%</th><th>USG%</th><th class="text-center">Śr.czas</th><th>AST</th><th>OREB</th><th>DREB</th><th>BR</th><th>FIN</th></tr></thead>
             <tbody>{rows}</tbody></table></div>"""
 
     # Piątki
@@ -2766,17 +2873,87 @@ def mecz(match_id):
 
     # Shot timing
     def tim_table(druzyna):
+        # Kolory kwart
+        qcolors = {1:"#e3f2fd",2:"#e8f5e9",3:"#fff8e1",4:"#fce4ec",0:"#f5f5f5"}
+        qlabels = {1:"1Q",2:"2Q",3:"3Q",4:"4Q",0:"Suma"}
+
+        # Oblicz sumy per bucket across quarters
+        def get_td(q, b):
+            return next((r for r in all_timing if r["druzyna"]==druzyna and r["bucket"]==b and (r.get("kwarta") or 0)==q), {})
+
+        # Tabela per kwarta
         rows = ""
         for b in BUCKETS:
-            td = next((r for r in all_timing if r["druzyna"]==druzyna and r["bucket"]==b), {})
-            m2=td.get("made2",0); a2=td.get("att2",0)
-            m3=td.get("made3",0); a3=td.get("att3",0)
-            tot=m2+m3; att=a2+a3
-            eff=f"{tot/att:.0%}" if att else "-"
-            rows += f"<tr><td style=\"background:#fff\"><b>{b}</b></td><td>{m2}/{a2}</td><td>{m3}/{a3}</td><td><b>{eff}</b></td></tr>"
-        return f"""<div class="table-responsive"><table class="table table-hover mb-0">
-            <thead><tr><th>Czas</th><th>2PT</th><th>3PT</th><th>Eff%</th></tr></thead>
-            <tbody>{rows}</tbody></table></div>"""
+            # Suma dla tego bucket
+            m2s=a2s=m3s=a3s=0
+            for q in [1,2,3,4]:
+                td = get_td(q, b)
+                m2s+=td.get("made2",0); a2s+=td.get("att2",0)
+                m3s+=td.get("made3",0); a3s+=td.get("att3",0)
+            # Stare rekordy (kwarta=0 lub NULL) — fallback
+            td0 = get_td(0, b)
+            if td0 and not any(get_td(q,b) for q in [1,2,3,4]):
+                m2s=td0.get("made2",0); a2s=td0.get("att2",0)
+                m3s=td0.get("made3",0); a3s=td0.get("att3",0)
+            tot=m2s+m3s; att=a2s+a3s
+            eff=f"{tot/att:.0%}" if att else "—"
+            bar_w = int(att / max(max(
+                sum(get_td(q2,bb).get("att2",0)+get_td(q2,bb).get("att3",0) for q2 in [0,1,2,3,4])
+                for bb in BUCKETS), 1) * 60)
+            bar_w = min(bar_w, 60)
+            eff_col = "#1a6b3c" if att and (m2s+m3s)/att >= 0.5 else ("#D85A30" if att and (m2s+m3s)/att < 0.35 else "#444")
+            rows += f"""<tr>
+              <td style="font-weight:600;width:60px">{b}</td>
+              <td class="text-center">{m2s}/{a2s}</td>
+              <td class="text-center">{m3s}/{a3s}</td>
+              <td class="text-center fw-bold" style="color:{eff_col}">{eff}</td>
+              <td style="padding:6px 8px"><div style="height:8px;width:{bar_w}px;background:#1a2b4a;border-radius:3px;min-width:2px"></div></td>
+            </tr>"""
+
+        # Per kwarta breakdown
+        q_rows = ""
+        for q in [1,2,3,4]:
+            qcol = qcolors[q]
+            q_rows += f'<tr style="background:{qcol}"><td colspan="5" style="padding:3px 8px;font-weight:600;font-size:.78rem">{qlabels[q]}</td></tr>'
+            has_data = False
+            for b in BUCKETS:
+                td = get_td(q, b)
+                m2=td.get("made2",0); a2=td.get("att2",0)
+                m3=td.get("made3",0); a3=td.get("att3",0)
+                if a2+a3 == 0: continue
+                has_data = True
+                tot=m2+m3; att=a2+a3
+                eff=f"{tot/att:.0%}" if att else "—"
+                eff_col = "#1a6b3c" if att and tot/att>=0.5 else ("#D85A30" if att and tot/att<0.35 else "#444")
+                q_rows += f"""<tr>
+                  <td style="padding-left:14px;font-size:.8rem">{b}</td>
+                  <td class="text-center" style="font-size:.8rem">{m2}/{a2}</td>
+                  <td class="text-center" style="font-size:.8rem">{m3}/{a3}</td>
+                  <td class="text-center fw-bold" style="color:{eff_col};font-size:.8rem">{eff}</td>
+                  <td></td>
+                </tr>"""
+            if not has_data:
+                q_rows += f'<tr><td colspan="5" style="padding:2px 8px;font-size:.78rem;color:#aaa;padding-left:14px">brak danych — wgraj mecz ponownie</td></tr>'
+
+        return f"""
+        <ul class="nav nav-tabs mb-2" style="font-size:.82rem">
+          <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tim-sum-{druzyna}">Suma</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tim-q-{druzyna}">Per kwarta</button></li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane fade show active" id="tim-sum-{druzyna}">
+            <div class="table-responsive"><table class="table table-hover mb-0" style="font-size:.82rem">
+              <thead><tr><th>Czas</th><th class="text-center">2PT</th><th class="text-center">3PT</th><th class="text-center">Eff%</th><th></th></tr></thead>
+              <tbody>{rows}</tbody>
+            </table></div>
+          </div>
+          <div class="tab-pane fade" id="tim-q-{druzyna}">
+            <div class="table-responsive"><table class="table table-hover mb-0" style="font-size:.82rem">
+              <thead><tr><th>Czas</th><th class="text-center">2PT</th><th class="text-center">3PT</th><th class="text-center">Eff%</th><th></th></tr></thead>
+              <tbody>{q_rows}</tbody>
+            </table></div>
+          </div>
+        </div>"""
 
     pts_q_gtk = [next((r["pts"] for r in all_stats if r["druzyna"]=="gtk" and r["kwarta"]==q),0) for q in [1,2,3,4]]
     pts_q_opp = [next((r["pts"] for r in all_stats if r["druzyna"]=="opp" and r["kwarta"]==q),0) for q in [1,2,3,4]]
@@ -3889,7 +4066,8 @@ def zawodnicy():
                 SUM(br) as br, SUM(fd) as fd, SUM(finishes) as finishes,
                 COUNT(DISTINCT match_id) as mecze,
                 BOOL_OR(ma_nieprzypisane) as ma_nieprzypisane,
-                SUM(team_poss) as team_poss
+                SUM(team_poss) as team_poss,
+                SUM(time_sum) as time_sum, SUM(time_cnt) as time_cnt
             FROM (
                 SELECT
                     CASE WHEN r.id IS NOT NULL THEN r.id::text
@@ -3905,7 +4083,9 @@ def zawodnicy():
                     SUM(ps.ast) as ast, SUM(ps.oreb) as oreb, SUM(ps.dreb) as dreb,
                     SUM(ps.br) as br, SUM(ps.fd) as fd, SUM(ps.finishes) as finishes,
                     (r.id IS NULL) as ma_nieprzypisane,
-                    COALESCE(mp.poss, 0) as team_poss
+                    COALESCE(mp.poss, 0) as team_poss,
+                    SUM(COALESCE(ps.time_sum,0)) as time_sum,
+                    SUM(COALESCE(ps.time_cnt,0)) as time_cnt
                 FROM player_stats ps
                 JOIN matches m ON ps.match_id=m.id
                 LEFT JOIN roster r ON ps.roster_id=r.id
@@ -3956,6 +4136,9 @@ def zawodnicy():
         ppg  = f"{pts/n:.1f}"
         tposs = int(p.get("team_poss",0) or 0)
         usg  = f"{(fga + 0.44*fta + int(p.get('br',0) or 0)) / tposs:.1%}" if tposs else "-"
+        tsum = float(p.get("time_sum") or 0)
+        tcnt = int(p.get("time_cnt") or 0)
+        avg_t = f"{tsum/tcnt:.1f}s" if tcnt else "—"
         nie = p.get('ma_nieprzypisane')
         nazwa = p.get('nazwa','?')
         grp_id = p.get('grp_id','')
@@ -3980,6 +4163,7 @@ def zawodnicy():
             <td>{int(p.get('br',0) or 0)}</td>
             <td>{int(p.get('finishes',0) or 0)}</td>
             <td><b>{usg}</b></td>
+            <td style="color:#888">{avg_t}</td>
             <td class="fw-bold" style="color:#1a2b4a">{pts}</td>
             <td style="font-size:.78rem;color:#888">{n}</td>
         </tr>"""
@@ -4018,11 +4202,12 @@ def zawodnicy():
           {th('BR',10)}
           {th('FIN',11)}
           {th('USG%',12)}
-          {th('PTS',13)}
-          {th('Mecze',14)}
+          {th('Śr.czas',13)}
+          {th('PTS',14)}
+          {th('Mecze',15)}
         </tr></thead>
         <tbody id="zawBody">
-          {rows if rows else '<tr><td colspan="15" class="text-center text-muted py-4">Brak danych zawodników</td></tr>'}
+          {rows if rows else '<tr><td colspan="16" class="text-center text-muted py-4">Brak danych zawodników</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -4130,23 +4315,34 @@ def profil_zawodnika(roster_id):
     p2pct = f"{pm2_tot/s('p2a'):.1%}" if s('p2a') else "—"
     p3pct = f"{pm3_tot/s('p3a'):.1%}" if s('p3a') else "—"
     ftpct = f"{ftm_tot/fta_tot:.1%}" if fta_tot else "—"
+    tsum_tot = sum(float(r.get("time_sum") or 0) for r in mecze_stats)
+    tcnt_tot = sum(int(r.get("time_cnt") or 0) for r in mecze_stats)
+    avg_t_tot = f"{tsum_tot/tcnt_tot:.1f}s" if tcnt_tot else "—"
 
     # KPI cards
-    def kpi(val, lbl, color="#1a2b4a"):
-        return f'<div class="col"><div class="stat-card"><div class="stat-val sm" style="color:{color}">{val}</div><div class="stat-lbl">{lbl}</div></div></div>'
+    def kpi(val, lbl, color="#1a2b4a", subtitle=""):
+        sub_html = f'<div style="font-size:.65rem;color:#bbb;margin-top:1px">{subtitle}</div>' if subtitle else ""
+        tip = f' title="{subtitle}"' if subtitle else ""
+        cur = 'help' if subtitle else 'default'
+        return (f'<div class="col"><div class="stat-card"{tip} style="cursor:{cur}">'
+                f'<div class="stat-val sm" style="color:{color}">{val}</div>'
+                f'<div class="stat-lbl">{lbl}</div>'
+                f'{sub_html}'
+                f'</div></div>')
 
     kpi_html = (
-        kpi(ppg, "PPG", "#1a2b4a") +
-        kpi(efg, "eFG%") +
-        kpi(ts, "TS%") +
-        kpi(usg, "USG%", "#D85A30") +
-        kpi(p2pct, "2PT%") +
-        kpi(p3pct, "3PT%") +
-        kpi(ftpct, "FT%") +
-        kpi(f"{ast_tot/n:.1f}", "APG") +
-        kpi(f"{br_tot/n:.1f}", "BPG") +
-        kpi(f"{fin_tot/n:.1f}", "FIN/G") +
-        kpi(str(n), "Mecze")
+        kpi(ppg,  "PPG",     "#1a2b4a", "points per game") +
+        kpi(efg,  "eFG%",    "#1a2b4a", "effective FG%") +
+        kpi(ts,   "TS%",     "#1a2b4a", "true shooting %") +
+        kpi(usg,  "USG%",    "#D85A30", "usage rate") +
+        kpi(p2pct,"2PT%",    "#1a2b4a", "za 2 punkty") +
+        kpi(p3pct,"3PT%",    "#1a2b4a", "za 3 punkty") +
+        kpi(ftpct,"FT%",     "#1a2b4a", "rzuty wolne") +
+        kpi(avg_t_tot,"Śr.czas","#555", "średni czas akcji") +
+        kpi(f"{ast_tot/n:.1f}", "APG",  "#1a2b4a", "asysty/mecz") +
+        kpi(f"{br_tot/n:.1f}",  "BPG",  "#1a2b4a", "straty/mecz") +
+        kpi(f"{fin_tot/n:.1f}", "FIN/G","#1a2b4a", "wykończenia/mecz") +
+        kpi(str(n), "Mecze",  "#888")
     )
 
     # Tabela meczów
@@ -4164,6 +4360,9 @@ def profil_zawodnika(roster_id):
         efg_m = f"{(p2m+1.5*p3m)/fga:.0%}" if fga else "—"
         tposs = int(r.get("team_poss",0) or 0)
         usg_m = f"{(fga+0.44*fta+br)/tposs:.0%}" if tposs else "—"
+        tsum_m = float(r.get("time_sum") or 0)
+        tcnt_m = int(r.get("time_cnt") or 0)
+        avg_t_m = f"{tsum_m/tcnt_m:.1f}s" if tcnt_m else "—"
         wg = int(r["wynik_gtk"] or 0); wo = int(r["wynik_opp"] or 0)
         wynik_badge = f'<span class="badge" style="background:{"#e8f5e9;color:#1a5c2a" if wg>wo else "#ffebee;color:#8b1a1a"}">{"W" if wg>wo else "P"} {wg}:{wo}</span>'
         pts_color = "#1a6b3c" if pts >= 20 else ("#D85A30" if pts >= 15 else "#333")
@@ -4176,6 +4375,7 @@ def profil_zawodnika(roster_id):
             <td>{ftm}/{fta}</td>
             <td><b>{efg_m}</b></td>
             <td>{usg_m}</td>
+            <td style="color:#888">{avg_t_m}</td>
             <td>{ast}</td><td>{br}</td><td>{fin}</td>
         </tr>"""
 
@@ -4190,9 +4390,73 @@ def profil_zawodnika(roster_id):
     avg_pts    = round(pts_tot/n, 1)
 
     initials = (zawodnik['imie'][0] + zawodnik['nazwisko'][0]).upper()
-    nr_str = " / ".join(f"#{n}" for n in numery) if numery else ""
+    # Zmiana 1: nr w awatarze, nie w podpisie
+    nr_display = numery[0] if len(numery) == 1 else ""
+    nr_str = " / ".join(f"#{nr}" for nr in numery) if numery else ""
     gtk_name = get_setting("gtk_name") or "GTK"
     season_opts = "".join([f'<option value="{s}" {"selected" if s==sezon_filter else ""}>{s}</option>' for s in sezony])
+
+    # Zmiana 3: odwróć kolejność — najstarszy na dole, najnowszy na górze
+    mecze_odwr = list(reversed(mecze_stats))
+    match_rows_rev = ""
+    for r in mecze_odwr:
+        dt = r["data_meczu"].strftime("%d.%m") if r["data_meczu"] else ""
+        pts = int(r.get("pts",0) or 0)
+        p2a = int(r.get("p2a",0) or 0); p2m = int(r.get("p2m",0) or 0)
+        p3a = int(r.get("p3a",0) or 0); p3m = int(r.get("p3m",0) or 0)
+        fta = int(r.get("fta",0) or 0); ftm = int(r.get("ftm",0) or 0)
+        br  = int(r.get("br",0) or 0)
+        fin = int(r.get("finishes",0) or 0)
+        ast = int(r.get("ast",0) or 0)
+        fga = p2a + p3a
+        efg_m = f"{(p2m+1.5*p3m)/fga:.0%}" if fga else "—"
+        tposs = int(r.get("team_poss",0) or 0)
+        usg_m = f"{(fga+0.44*fta+br)/tposs:.0%}" if tposs else "—"
+        tsum_m = float(r.get("time_sum") or 0)
+        tcnt_m = int(r.get("time_cnt") or 0)
+        avg_t_m = f"{tsum_m/tcnt_m:.1f}s" if tcnt_m else "—"
+        wg = int(r["wynik_gtk"] or 0); wo = int(r["wynik_opp"] or 0)
+        wynik_badge = f'<span class="badge" style="background:{"#e8f5e9;color:#1a5c2a" if wg>wo else "#ffebee;color:#8b1a1a"}">{"W" if wg>wo else "P"} {wg}:{wo}</span>'
+        pts_color = "#1a6b3c" if pts >= 20 else ("#D85A30" if pts >= 15 else "#333")
+        match_rows_rev += f"""<tr>
+            <td style="font-size:.82rem;font-weight:500">{r['przeciwnik']}</td>
+            <td style="font-size:.78rem;color:#888">{dt}</td>
+            <td class="text-center">{wynik_badge}</td>
+            <td class="text-center fw-bold" style="color:{pts_color}">{pts}</td>
+            <td class="text-center">{p2m}/{p2a}</td><td class="text-center">{p3m}/{p3a}</td>
+            <td class="text-center">{ftm}/{fta}</td>
+            <td class="text-center"><b>{efg_m}</b></td>
+            <td class="text-center">{usg_m}</td>
+            <td class="text-center" style="color:#888">{avg_t_m}</td>
+            <td class="text-center">{ast}</td><td class="text-center">{br}</td><td class="text-center">{fin}</td>
+        </tr>"""
+
+    # Dane JS — kolejność odwrócona (najstarszy→najnowszy = lewa→prawa)
+    import json
+    mecze_chron = mecze_stats  # chronologicznie (stare→nowe)
+    labels_js   = json.dumps([r["przeciwnik"][:8] for r in mecze_chron])
+    pts_js      = json.dumps([int(r.get("pts",0) or 0) for r in mecze_chron])
+    ast_js      = json.dumps([int(r.get("ast",0) or 0) for r in mecze_chron])
+    br_js       = json.dumps([int(r.get("br",0) or 0) for r in mecze_chron])
+    fin_js      = json.dumps([int(r.get("finishes",0) or 0) for r in mecze_chron])
+    reb_js      = json.dumps([int(r.get("oreb",0) or 0)+int(r.get("dreb",0) or 0) for r in mecze_chron])
+    efg_js      = json.dumps([round((int(r.get("p2m",0) or 0)+1.5*int(r.get("p3m",0) or 0))/(int(r.get("p2a",0) or 0)+int(r.get("p3a",0) or 0))*100,1) if (int(r.get("p2a",0) or 0)+int(r.get("p3a",0) or 0)) else None for r in mecze_chron])
+    p2pct_js    = round(pm2_tot/s('p2a')*100,1) if s('p2a') else 0
+    p3pct_js    = round(pm3_tot/s('p3a')*100,1) if s('p3a') else 0
+    ftpct_js    = round(ftm_tot/fta_tot*100,1) if fta_tot else 0
+    avg_pts     = round(pts_tot/n, 1)
+    # Zmiana 5: szerokość słupka zależna od liczby meczów
+    bar_w = max(16, min(50, 300 // max(n, 1)))
+
+    # Zmiana 2: etykiety KPI z pełną nazwą
+    KPI_LABELS = {{
+        "PPG": "PPG — pkt/mecz", "eFG%": "eFG% — skuteczność",
+        "TS%": "TS% — true shooting", "USG%": "USG% — użycie",
+        "2PT%": "2PT% — za 2", "3PT%": "3PT% — za 3",
+        "FT%": "FT% — wolne", "Śr.czas": "Śr.czas akcji",
+        "APG": "APG — asyst/mecz", "BPG": "BPG — strat/mecz",
+        "FIN/G": "FIN/G — wyk./mecz", "Mecze": "Mecze",
+    }}
 
     content = f"""
 <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
@@ -4204,10 +4468,13 @@ def profil_zawodnika(roster_id):
 <div class="card mb-3">
   <div class="card-body p-3">
     <div class="d-flex align-items-center gap-3 flex-wrap">
-      <div style="width:56px;height:56px;border-radius:50%;background:#1a2b4a;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#fff;flex-shrink:0">{initials}</div>
+      <!-- Zmiana 1: nr w kółku zamiast initials gdy jeden numer -->
+      <div style="width:56px;height:56px;border-radius:50%;background:#1a2b4a;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">
+        {"<span style='font-size:9px;color:rgba(255,255,255,.5);line-height:1'>#</span><span style='font-size:20px;font-weight:700;color:#fff;line-height:1.1'>" + nr_display + "</span>" if nr_display else "<span style='font-size:20px;font-weight:700;color:#fff'>" + initials + "</span>"}
+      </div>
       <div style="flex:1;min-width:160px">
         <div style="font-size:20px;font-weight:700;color:#1a2b4a">{zawodnik['imie']} {zawodnik['nazwisko']}</div>
-        <div style="font-size:.82rem;color:#888;margin-top:2px">{nr_str} · {gtk_name}</div>
+        <div style="font-size:.82rem;color:#888;margin-top:2px">{gtk_name}</div>
         <div style="margin-top:6px">
           <span class="badge" style="background:{"#e8f5e9;color:#1a5c2a" if zawodnik['aktywny'] else "#ffebee;color:#8b1a1a"}">{"Aktywny" if zawodnik['aktywny'] else "Nieaktywny"}</span>
           <span class="badge ms-1" style="background:#e6f1fb;color:#0c447c">{n} meczów</span>
@@ -4223,15 +4490,24 @@ def profil_zawodnika(roster_id):
   </div>
 </div>
 
-<!-- KPI -->
+<!-- KPI — Zmiana 2: podpisy z pełną nazwą -->
 <div class="row g-2 mb-3">{kpi_html}</div>
 
-<!-- WYKRESY -->
+<!-- WYKRESY — Zmiana 4: przełącznik metryki -->
 <div class="row g-3 mb-3">
   <div class="col-lg-7">
     <div class="card h-100"><div class="card-body p-2">
-      <div class="section-hdr">Punkty per mecz</div>
-      <div style="position:relative;height:180px"><canvas id="chartPts"></canvas></div>
+      <div class="d-flex align-items-center justify-content-between mb-1">
+        <div class="section-hdr mb-0" id="chartMainTitle">Punkty per mecz</div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button type="button" class="btn btn-primary active btn-sm" id="btnPTS" onclick="switchMetric('PTS')">PTS</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="btnAST" onclick="switchMetric('AST')">AST</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="btnREB" onclick="switchMetric('REB')">REB</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="btnBR" onclick="switchMetric('BR')">BR</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="btnFIN" onclick="switchMetric('FIN')">FIN</button>
+        </div>
+      </div>
+      <div style="position:relative;height:180px"><canvas id="chartMain"></canvas></div>
     </div></div>
   </div>
   <div class="col-lg-5">
@@ -4242,9 +4518,9 @@ def profil_zawodnika(roster_id):
   </div>
 </div>
 
-<!-- TABELA MECZÓW -->
+<!-- TABELA MECZÓW — Zmiana 3: najnowszy na górze -->
 <div class="card mb-3"><div class="card-body p-2">
-  <div class="section-hdr">Przebieg sezonu — mecz po meczu</div>
+  <div class="section-hdr">Przebieg sezonu — mecz po meczu <span style="font-size:.72rem;color:#aaa;font-weight:400">(najnowszy ↑ / najstarszy ↓)</span></div>
   <div class="table-responsive">
   <table class="table table-hover mb-0" style="font-size:.82rem">
     <thead><tr>
@@ -4252,9 +4528,10 @@ def profil_zawodnika(roster_id):
       <th class="text-center">PTS</th>
       <th class="text-center">2PM/A</th><th class="text-center">3PM/A</th><th class="text-center">FTM/A</th>
       <th class="text-center">eFG%</th><th class="text-center">USG%</th>
+      <th class="text-center">Śr.czas</th>
       <th class="text-center">AST</th><th class="text-center">BR</th><th class="text-center">FIN</th>
     </tr></thead>
-    <tbody>{match_rows}</tbody>
+    <tbody>{match_rows_rev}</tbody>
   </table>
   </div>
 </div></div>
@@ -4263,48 +4540,63 @@ def profil_zawodnika(roster_id):
     scripts = f"""<script>
 (function() {{
   var labels = {labels_js};
-  var pts = {pts_js};
-  var efg = {efg_js};
-  var avg = {avg_pts};
+  var nMecze = labels.length;
+  // Zmiana 5: szerokość słupka proporcjonalna, max 50px
+  var barW = Math.max(16, Math.min(50, Math.floor(280 / Math.max(nMecze, 1))));
 
-  var ctx1 = document.getElementById('chartPts').getContext('2d');
-  new Chart(ctx1, {{
-    type: 'bar',
-    data: {{
-      labels: labels,
-      datasets: [
-        {{
-          type: 'bar',
-          label: 'PTS',
-          data: pts,
-          backgroundColor: pts.map(v => v >= 20 ? '#1a6b3c' : v >= 15 ? '#378ADD' : '#1a2b4a'),
-          borderRadius: 3,
-          order: 2
-        }},
-        {{
-          type: 'line',
-          label: 'Średnia',
-          data: labels.map(() => avg),
-          borderColor: '#D85A30',
-          borderWidth: 2,
-          borderDash: [4,3],
-          pointRadius: 0,
-          fill: false,
-          order: 1
-        }}
-      ]
-    }},
-    options: {{
-      responsive: true, maintainAspectRatio: false,
-      plugins: {{legend: {{display: false}},
-        tooltip: {{callbacks: {{label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y}}}}}},
-      scales: {{
-        x: {{ticks: {{font: {{size: 9}}, maxRotation: 40, autoSkip: false}}}},
-        y: {{ticks: {{font: {{size: 10}}}}, grid: {{color: 'rgba(0,0,0,0.05)'}}}}
-      }}
+  var allData = {{
+    'PTS': {{ data: {pts_js}, avg: {avg_pts}, color: d => d >= 20 ? '#1a6b3c' : d >= 15 ? '#378ADD' : '#1a2b4a', title: 'Punkty per mecz' }},
+    'AST': {{ data: {ast_js}, avg: null, color: () => '#378ADD', title: 'Asysty per mecz' }},
+    'REB': {{ data: {reb_js}, avg: null, color: () => '#1D9E75', title: 'Zbiórki per mecz' }},
+    'BR':  {{ data: {br_js},  avg: null, color: () => '#D85A30', title: 'Straty per mecz' }},
+    'FIN': {{ data: {fin_js}, avg: null, color: () => '#1a2b4a', title: 'Wykończenia per mecz' }},
+  }};
+
+  var mainChart = null;
+
+  function buildMainChart(metric) {{
+    var cfg = allData[metric];
+    var avg = cfg.avg != null ? cfg.avg : (cfg.data.reduce((a,b)=>a+b,0)/Math.max(cfg.data.length,1));
+    var datasets = [{{
+      type: 'bar', label: metric, data: cfg.data,
+      backgroundColor: cfg.data.map(v => cfg.color(v)),
+      borderRadius: 3, barThickness: barW, order: 2
+    }}];
+    if (cfg.data.length > 1) {{
+      datasets.push({{
+        type: 'line', label: 'Średnia', data: labels.map(() => Math.round(avg*10)/10),
+        borderColor: '#D85A30', borderWidth: 2, borderDash: [4,3],
+        pointRadius: 0, fill: false, order: 1
+      }});
     }}
-  }});
+    return {{
+      type: 'bar', data: {{ labels: labels, datasets: datasets }},
+      options: {{
+        responsive: true, maintainAspectRatio: false,
+        plugins: {{ legend: {{display: false}},
+          tooltip: {{callbacks: {{label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y}}}} }},
+        scales: {{
+          x: {{ ticks: {{font: {{size: 9}}, maxRotation: 40, autoSkip: false}} }},
+          y: {{ min: 0, ticks: {{font: {{size: 10}}}}, grid: {{color: 'rgba(0,0,0,0.05)'}} }}
+        }}
+      }}
+    }};
+  }}
 
+  function switchMetric(metric) {{
+    ['PTS','AST','REB','BR','FIN'].forEach(m => {{
+      var btn = document.getElementById('btn'+m);
+      if (btn) btn.className = m===metric ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
+    }});
+    document.getElementById('chartMainTitle').textContent = allData[metric].title;
+    if (mainChart) mainChart.destroy();
+    mainChart = new Chart(document.getElementById('chartMain').getContext('2d'), buildMainChart(metric));
+  }}
+
+  // Inicjalizacja domyślna: PTS
+  switchMetric('PTS');
+
+  // Wykres skuteczności
   var ctx2 = document.getElementById('chartShoot').getContext('2d');
   new Chart(ctx2, {{
     type: 'bar',
