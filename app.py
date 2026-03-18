@@ -6051,22 +6051,15 @@ def template_zapis():
     for team_name in [gtk_name, "drużyna_B"]:
         ws = wb.create_sheet(team_name)
 
-        # Nagłówek tytułowy
-        ws.merge_cells("A1:N1")
-        t = ws["A1"]
-        t.value = f"ZAPIS MECZU — {team_name}"
-        t.fill = HDR; t.font = Font(color="FFFFFF", bold=True, size=11); t.alignment = CTR
-        ws.row_dimensions[1].height = 20
-
-        # Nagłówki kolumn
+        # Nagłówki kolumn od wiersza 1
         for ci, (col, lbl, w, fill) in enumerate(COLS):
             ws.column_dimensions[col].width = w
-            c = ws.cell(2, ci+1, lbl)
+            c = ws.cell(1, ci+1, lbl)
             c.fill = fill; c.font = Font(bold=True, size=9); c.alignment = CTR; c.border = BD
-        ws.row_dimensions[2].height = 32
+        ws.row_dimensions[1].height = 32
 
         # 200 pustych wierszy danych
-        for r in range(3, 203):
+        for r in range(2, 202):
             for ci, (col, _, _, fill) in enumerate(COLS):
                 c = ws.cell(r, ci+1)
                 c.border = BD
@@ -6077,7 +6070,7 @@ def template_zapis():
                 elif col == "D":
                     c.fill = PatternFill("solid", fgColor="F9FBE7")
 
-        ws.freeze_panes = "A3"
+        ws.freeze_panes = "A2"
 
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     return send_file(buf, as_attachment=True,
