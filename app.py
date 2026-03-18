@@ -4403,6 +4403,27 @@ def profil_zawodnika(roster_id):
     p3pct_js    = round(pm3_tot/s('p3a')*100,1) if s('p3a') else 0
     ftpct_js    = round(ftm_tot/fta_tot*100,1) if fta_tot else 0
     avg_pts     = round(pts_tot/n, 1)
+    # Sumy sezonowe dla prawego wykresu per metryka
+    ast_tot_s   = round(ast_tot/n, 1)
+    br_tot_s    = round(br_tot/n, 1)
+    fin_tot_s   = round(fin_tot/n, 1)
+    reb_tot_s   = round((sum(int(r.get("oreb",0) or 0)+int(r.get("dreb",0) or 0) for r in mecze_stats))/n, 1)
+    # Per mecz dla prawego wykresu (każda metryka: [min, avg, max])
+    def season_bar(vals):
+        nz = [v for v in vals if v is not None]
+        if not nz: return [0, 0, 0]
+        return [min(nz), round(sum(nz)/len(nz),1), max(nz)]
+    pts_season  = season_bar([int(r.get("pts",0) or 0) for r in mecze_stats])
+    ast_season  = season_bar([int(r.get("ast",0) or 0) for r in mecze_stats])
+    br_season   = season_bar([int(r.get("br",0) or 0) for r in mecze_stats])
+    fin_season  = season_bar([int(r.get("finishes",0) or 0) for r in mecze_stats])
+    reb_season  = season_bar([int(r.get("oreb",0) or 0)+int(r.get("dreb",0) or 0) for r in mecze_stats])
+    import json as _json
+    pts_season_js  = _json.dumps(pts_season)
+    ast_season_js  = _json.dumps(ast_season)
+    br_season_js   = _json.dumps(br_season)
+    fin_season_js  = _json.dumps(fin_season)
+    reb_season_js  = _json.dumps(reb_season)
     # Zmiana 5: szerokość słupka zależna od liczby meczów
     bar_w = max(16, min(50, 300 // max(n, 1)))
 
@@ -4451,7 +4472,7 @@ def profil_zawodnika(roster_id):
   </div>
   <div class="col-lg-5">
     <div class="card h-100"><div class="card-body p-2">
-      <div class="section-hdr">Skuteczność rzutów (sezon)</div>
+      <div class="section-hdr" id="chartShootTitle">Skuteczność rzutów (sezon)</div>
       <div style="position:relative;height:180px"><canvas id="chartShoot"></canvas></div>
     </div></div>
   </div>
@@ -4577,41 +4598,91 @@ def profil_zawodnika(roster_id):
         }}
       }}
     }});
+    // Synchronizuj prawy wykres
+    if (typeof updateShootChart === 'function') updateShootChart(metric);
   }}
 
-  // Inicjalizacja po załadowaniu Chart.js
-  switchMetric('PTS');
+  // Dane dla prawego wykresu per metryka (min/śr/max sezonu)
+  var shootData = {{
+    'PTS': {{
+      labels: ['2PT%', '3PT%', 'FT%'],
+      data:   [{p2pct_js}, {p3pct_js}, {ftpct_js}],
+      colors: ['#1a2b4a','#378ADD','#1D9E75'],
+      title:  'Skuteczność rzutów (sezon)',
+      unit:   '%'
+    }},
+    'AST': {{
+      labels: ['Min', 'Śr.', 'Max'],
+      data:   {ast_season_js},
+      colors: ['#aad4f5','#378ADD','#1a5fa0'],
+      title:  'Asysty — min / śr / max',
+      unit:   ''
+    }},
+    'REB': {{
+      labels: ['Min', 'Śr.', 'Max'],
+      data:   {reb_season_js},
+      colors: ['#a8e6cf','#1D9E75','#0d6b4f'],
+      title:  'Zbiórki — min / śr / max',
+      unit:   ''
+    }},
+    'BR': {{
+      labels: ['Min', 'Śr.', 'Max'],
+      data:   {br_season_js},
+      colors: ['#f5c6a0','#D85A30','#9e3a18'],
+      title:  'Straty — min / śr / max',
+      unit:   ''
+    }},
+    'FIN': {{
+      labels: ['Min', 'Śr.', 'Max'],
+      data:   {fin_season_js},
+      colors: ['#c5ccd6','#555','#1a2b4a'],
+      title:  'Wykończenia — min / śr / max',
+      unit:   ''
+    }}
+  }};
+
+  var shootChart = null;
+
+  function updateShootChart(metric) {{
+    var cfg = shootData[metric] || shootData['PTS'];
+    var titleEl = document.getElementById('chartShootTitle');
+    if (titleEl) titleEl.textContent = cfg.title;
+    if (shootChart) {{ shootChart.destroy(); shootChart = null; }}
+    var canvas = document.getElementById('chartShoot');
+    if (!canvas) return;
+    var isPct = cfg.unit === '%';
+    shootChart = new Chart(canvas.getContext('2d'), {{
+      type: 'bar',
+      data: {{
+        labels: cfg.labels,
+        datasets: [{{ data: cfg.data, backgroundColor: cfg.colors, borderRadius: 4, barThickness: 40 }}]
+      }},
+      options: {{
+        responsive: true, maintainAspectRatio: false,
+        plugins: {{
+          legend: {{ display: false }},
+          tooltip: {{ callbacks: {{ label: function(c) {{ return isPct ? c.parsed.y.toFixed(1)+'%' : c.parsed.y; }} }} }}
+        }},
+        scales: {{
+          x: {{ ticks: {{ font: {{ size: 12 }} }} }},
+          y: {{
+            min: 0,
+            max: isPct ? 100 : undefined,
+            ticks: {{ font: {{ size: 10 }}, callback: function(v) {{ return isPct ? v+'%' : v; }} }},
+            grid: {{ color: 'rgba(0,0,0,0.05)' }}
+          }}
+        }}
+      }}
+    }});
+  }}
 
   // Inicjalizacja Bootstrap tooltipów na kafelkach KPI
   document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {{
     new bootstrap.Tooltip(el, {{ trigger: 'hover', html: false }});
   }});
 
-  // Wykres skuteczności
-  var ctx2 = document.getElementById('chartShoot').getContext('2d');
-  new Chart(ctx2, {{
-    type: 'bar',
-    data: {{
-      labels: ['2PT%', '3PT%', 'FT%'],
-      datasets: [{{
-        data: [{p2pct_js}, {p3pct_js}, {ftpct_js}],
-        backgroundColor: ['#1a2b4a','#378ADD','#1D9E75'],
-        borderRadius: 4,
-        barThickness: 40
-      }}]
-    }},
-    options: {{
-      responsive: true, maintainAspectRatio: false,
-      plugins: {{
-        legend: {{ display: false }},
-        tooltip: {{ callbacks: {{ label: function(ctx) {{ return ctx.parsed.y.toFixed(1) + '%'; }} }} }}
-      }},
-      scales: {{
-        x: {{ ticks: {{ font: {{ size: 12 }} }} }},
-        y: {{ max: 100, ticks: {{ font: {{ size: 10 }}, callback: function(v) {{ return v + '%'; }} }}, grid: {{ color: 'rgba(0,0,0,0.05)' }} }}
-      }}
-    }}
-  }});
+  // Inicjalizacja domyślna — oba wykresy
+  switchMetric('PTS');
 </script>"""
 
     return render_template_string(base(content, scripts, active="players"))
