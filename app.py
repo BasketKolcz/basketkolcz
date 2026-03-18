@@ -4448,16 +4448,6 @@ def profil_zawodnika(roster_id):
     # Zmiana 5: szerokość słupka zależna od liczby meczów
     bar_w = max(16, min(50, 300 // max(n, 1)))
 
-    # Zmiana 2: etykiety KPI z pełną nazwą
-    KPI_LABELS = {{
-        "PPG": "PPG — pkt/mecz", "eFG%": "eFG% — skuteczność",
-        "TS%": "TS% — true shooting", "USG%": "USG% — użycie",
-        "2PT%": "2PT% — za 2", "3PT%": "3PT% — za 3",
-        "FT%": "FT% — wolne", "Śr.czas": "Śr.czas akcji",
-        "APG": "APG — asyst/mecz", "BPG": "BPG — strat/mecz",
-        "FIN/G": "FIN/G — wyk./mecz", "Mecze": "Mecze",
-    }}
-
     content = f"""
 <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
   <a href="/zawodnicy?sezon={sezon_filter}" class="btn btn-outline-secondary btn-sm">← Statystyki</a>
