@@ -784,29 +784,22 @@ def nav(active="home"):
 
     items = [
         ("home",     "/",          "🏠", "Strona główna"),
-        ("season",   "/sezon",     "📊", "Statystyki drużyny"),
         ("history",  "/historia",  "📋", "Historia meczów"),
         ("settings", "/ustawienia","⚙️", "Ustawienia"),
     ]
     team_items = [
         ("roster",   "/roster",    "👥", "Skład drużyny"),
+    ]
+    stats_items = [
+        ("season",   "/sezon",     "📊", "Statystyki drużynowe"),
         ("players",  "/zawodnicy", "📈", "Statystyki indywidualne"),
     ]
-    links = ""
-    for key, href, icon, label in items:
-        cls = "nav-item-link active" if active==key else "nav-item-link"
-        links += (f'<a href="{href}" class="{cls}" data-label="{label}">'
-                  f'<span class="icon">{icon}</span>'
-                  f'<span class="brand-text">{label}</span></a>')
-        # Wstaw Drużyna zaraz po Stronie głównej
-        if key == "home":
-            links += "##TEAM##"
 
-    # Drużyna — sekcja z podmenu
-    team_open = active in ("players","roster")
+    # Drużyna — podmenu
+    team_open = active in ("players", "roster")
     team_links = ""
     for key, href, icon, label in team_items:
-        cls = "nav-item-link active" if active==key else "nav-item-link"
+        cls = "nav-item-link active" if active == key else "nav-item-link"
         team_links += (f'<a href="{href}" class="{cls}" data-label="{label}" '
                        f'style="padding-left:1.4rem;font-size:.8rem">'
                        f'<span class="icon" style="font-size:.8rem">{icon}</span>'
@@ -825,6 +818,41 @@ def nav(active="home"):
     {team_links}
   </div>
 </div>"""
+
+    # Statystyki — podmenu
+    stats_open = active in ("season", "players")
+    stats_links = ""
+    for key, href, icon, label in stats_items:
+        cls = "nav-item-link active" if active == key else "nav-item-link"
+        stats_links += (f'<a href="{href}" class="{cls}" data-label="{label}" '
+                        f'style="padding-left:1.4rem;font-size:.8rem">'
+                        f'<span class="icon" style="font-size:.8rem">{icon}</span>'
+                        f'<span class="brand-text">{label}</span></a>')
+
+    stats_section = f"""
+<div class="nav-group brand-text">
+  <div class="nav-item-link {'active' if stats_open else ''}"
+       style="cursor:pointer" data-label="Statystyki"
+       onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display=='none'?'block':'none'">
+    <span class="icon">📊</span>
+    <span class="brand-text">Statystyki</span>
+    <span class="brand-text ms-auto" style="font-size:.7rem;opacity:.6">{'▼' if stats_open else '▶'}</span>
+  </div>
+  <div class="nav-submenu" style="display:{'block' if stats_open else 'none'}">
+    {stats_links}
+  </div>
+</div>"""
+
+    # Główne linki (bez statystyk i drużyny)
+    links = ""
+    for key, href, icon, label in items:
+        cls = "nav-item-link active" if active == key else "nav-item-link"
+        links += (f'<a href="{href}" class="{cls}" data-label="{label}">'
+                  f'<span class="icon">{icon}</span>'
+                  f'<span class="brand-text">{label}</span></a>')
+        if key == "home":
+            links += "##TEAM##"
+            links += "##STATS##"
 
     return f"""
 <!-- TOPBAR mobile -->
@@ -846,7 +874,7 @@ def nav(active="home"):
   </div>
   <div class="nav-season brand-text"><strong>{gtk_name}</strong>Sezon {season}</div>
   <div class="nav-section brand-text">Nawigacja</div>
-  {links.replace("##TEAM##", team_section)}
+  {links.replace("##TEAM##", team_section).replace("##STATS##", stats_section)}
 </div>
 
 <script>
