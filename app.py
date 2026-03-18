@@ -329,6 +329,14 @@ def parse_team_sheet(ws):
 
     return stats
 
+def build_gtk_def_lineups(ws_gtk, ws_opp):
+    """DEF lineup stats GTK: arkusz rywala (ws_opp) zawiera w kolumnach E-I
+    zawodnikow GTK na boisku podczas obrony - identyczna struktura jak arkusz GTK.
+    Wystarczy sparsowac ws_opp przez parse_team_sheet i zwrocic jego lineups.
+    """
+    stats_opp_sheet = parse_team_sheet(ws_opp)
+    return stats_opp_sheet["lineups"]
+
 def suma_quarters(stats):
     s = defaultdict(int)
     for qn in [1,2,3,4]:
@@ -359,7 +367,7 @@ def calc_kpi(d):
     }
 
 def save_match_to_db(przeciwnik, nazwa_gtk, sezon, data_meczu, stats_gtk, stats_opp,
-                     rozgrywki="", runda="", miejsce=""):
+                     rozgrywki="", runda="", miejsce="", def_lineups=None):
     db = get_db()
     cur = db.cursor()
     suma_gtk = suma_quarters(stats_gtk)
@@ -415,7 +423,7 @@ def save_match_to_db(przeciwnik, nazwa_gtk, sezon, data_meczu, stats_gtk, stats_
                   td["2PT"]["made"], td["2PT"]["made"]+td["2PT"]["miss"],
                   td["3PT"]["made"], td["3PT"]["made"]+td["3PT"]["miss"]))
 
-    # Piątki (lineup stats) — tylko GTK
+    # Piątki (lineup stats) — GTK OFF
     for lineup_key, ld in stats_gtk["lineups"].items():
         cur.execute("""
             INSERT INTO lineup_stats (match_id,druzyna,lineup,pts,poss,p2m,p2a,p3m,p3a,ftm,fta,br,fd)
@@ -426,6 +434,19 @@ def save_match_to_db(przeciwnik, nazwa_gtk, sezon, data_meczu, stats_gtk, stats_
               ld["p3m"], ld["p3a"],
               ld["ftm"], ld["fta"],
               ld["br"],  ld["fd"]))
+
+    # Piątki GTK DEF
+    if def_lineups:
+        for lineup_key, ld in def_lineups.items():
+            cur.execute("""
+                INSERT INTO lineup_stats (match_id,druzyna,lineup,pts,poss,p2m,p2a,p3m,p3a,ftm,fta,br,fd)
+                VALUES (%s,'gtk_def',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (match_id, lineup_key,
+                  ld["pts"], ld["poss"],
+                  ld["p2m"], ld["p2a"],
+                  ld["p3m"], ld["p3a"],
+                  ld["ftm"], ld["fta"],
+                  ld["br"],  ld["fd"]))
 
     db.commit()
     cur.close()
@@ -1141,12 +1162,17 @@ def _do_save(wb, name_gtk, name_opp, sezon, data_meczu):
 
     stats_gtk = parse_team_sheet(wb[name_gtk])
     stats_opp = parse_team_sheet(wb[name_opp])
+    try:
+        def_lineups = build_gtk_def_lineups(wb[name_gtk], wb[name_opp])
+    except Exception:
+        def_lineups = None
     match_id  = save_match_to_db(
         display_opp, display_gtk, sezon, data_meczu,
         stats_gtk, stats_opp,
         rozgrywki=str(meta.get("rozgrywki","") or ""),
         runda=str(meta.get("runda","") or ""),
         miejsce=str(meta.get("miejsce","") or ""),
+        def_lineups=def_lineups,
     )
     session.clear()
     session["last_match_id"] = match_id
@@ -1835,6 +1861,13 @@ def mecz(match_id):
     except:
         all_lineups = []
 
+    try:
+        cur.execute("""SELECT * FROM lineup_stats WHERE match_id=%s AND druzyna='gtk_def'
+                       ORDER BY poss DESC""", (match_id,))
+        all_lineups_def = list(cur.fetchall())
+    except:
+        all_lineups_def = []
+
     # Mapa roster_id → "Nazwisko I." dla GTK
     try:
         cur.execute("""SELECT ps.id as ps_id, r.imie, r.nazwisko
@@ -1949,12 +1982,13 @@ def mecz(match_id):
             <tbody>{rows}</tbody></table></div>"""
 
     # Piątki
-    def lineup_table():
-        if not all_lineups:
-            return '<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych piątek — wgraj mecz ponownie aby wygenerować.</p>'
+    def lineup_rows_html(lineups, mode="off"):
+        """Generuje wiersze tabeli piątek. mode='off' lub 'def'."""
+        if not lineups:
+            return ""
         rows = ""
-        for i, lu in enumerate(all_lineups):
-            fga = int(lu.get("p2a",0) or 0) + int(lu.get("p3a",0) or 0)
+        for i, lu in enumerate(lineups):
+            fga  = int(lu.get("p2a",0) or 0) + int(lu.get("p3a",0) or 0)
             pts  = int(lu.get("pts",0) or 0)
             poss = int(lu.get("poss",0) or 0)
             p2m  = int(lu.get("p2m",0) or 0); p2a = int(lu.get("p2a",0) or 0)
@@ -1963,9 +1997,12 @@ def mecz(match_id):
             br   = int(lu.get("br",0) or 0)
             efg  = f"{(p2m+1.5*p3m)/fga:.0%}" if fga else "—"
             ppp  = f"{pts/poss:.2f}" if poss else "—"
-            ppp_color = "#1a6b3c" if poss and pts/poss>=0.9 else ("#8b1a1a" if poss and pts/poss<0.7 else "#444")
+            if mode == "def":
+                # DEF: niski PPP = dobry (zielony), wysoki = zły (czerwony)
+                ppp_color = "#1a6b3c" if poss and pts/poss<0.70 else ("#8b1a1a" if poss and pts/poss>=0.90 else "#444")
+            else:
+                ppp_color = "#1a6b3c" if poss and pts/poss>=0.9 else ("#8b1a1a" if poss and pts/poss<0.7 else "#444")
             bg = "#f8f9ff" if i%2==0 else "#fff"
-            # Skład — zamień numery na nazwiska jeśli dostępne
             skladniki = " · ".join(nr_name_map.get(n, f"#{n}") for n in lu["lineup"].split("-"))
             rows += f"""<tr style="background:{bg}">
                 <td style="font-size:.78rem">{skladniki}</td>
@@ -1978,15 +2015,58 @@ def mecz(match_id):
                 <td class="text-center">{ftm}/{fta}</td>
                 <td class="text-center">{br}</td>
             </tr>"""
-        return f"""<p style="font-size:.72rem;color:#aaa;margin-bottom:.5rem">Posiadania ≥ 1 · PPP: <span style="color:#1a6b3c">≥0.90 dobry</span> / <span style="color:#8b1a1a">&lt;0.70 słaby</span></p>
-        <div class="table-responsive"><table class="table table-hover mb-0">
-        <thead><tr>
+        return rows
+
+    def lineup_table():
+        if not all_lineups and not all_lineups_def:
+            return '<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych piątek — wgraj mecz ponownie aby wygenerować.</p>'
+
+        rows_off = lineup_rows_html(all_lineups, "off")
+        rows_def = lineup_rows_html(all_lineups_def, "def")
+
+        legend_off = 'PPP: <span style="color:#1a6b3c">≥0.90 dobry</span> / <span style="color:#8b1a1a">&lt;0.70 słaby</span>'
+        legend_def = 'PPP rywala: <span style="color:#1a6b3c">&lt;0.70 dobry</span> / <span style="color:#8b1a1a">≥0.90 słaby</span>'
+
+        table_hdr = """<thead><tr>
           <th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th>
           <th class="text-center">PPP</th><th class="text-center">eFG%</th>
           <th class="text-center">2PM/A</th><th class="text-center">3PM/A</th>
           <th class="text-center">FTM/A</th><th class="text-center">BR</th>
-        </tr></thead>
-        <tbody>{rows}</tbody></table></div>"""
+        </tr></thead>"""
+
+        no_data_off = '<tr><td colspan="9" class="text-muted text-center p-3" style="font-size:.82rem">Brak danych OFF — wgraj mecz ponownie.</td></tr>'
+        no_data_def = '<tr><td colspan="9" class="text-muted text-center p-3" style="font-size:.82rem">Brak danych DEF — wgraj mecz ponownie.</td></tr>'
+
+        return f"""
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <div class="btn-group btn-group-sm" role="group">
+            <button type="button" class="btn btn-primary active" id="btn-lineup-off"
+              onclick="showLineup('off')">⚔ OFF</button>
+            <button type="button" class="btn btn-outline-secondary" id="btn-lineup-def"
+              onclick="showLineup('def')">🛡 DEF</button>
+          </div>
+          <span id="lineup-legend" style="font-size:.72rem;color:#aaa">{legend_off}</span>
+        </div>
+        <div id="lineup-off">
+          <div class="table-responsive"><table class="table table-hover mb-0">
+          {table_hdr}<tbody>{rows_off or no_data_off}</tbody></table></div>
+        </div>
+        <div id="lineup-def" style="display:none">
+          <div class="table-responsive"><table class="table table-hover mb-0">
+          {table_hdr}<tbody>{rows_def or no_data_def}</tbody></table></div>
+        </div>
+        <script>
+        function showLineup(mode) {{
+          document.getElementById('lineup-off').style.display = mode==='off' ? '' : 'none';
+          document.getElementById('lineup-def').style.display = mode==='def' ? '' : 'none';
+          document.getElementById('btn-lineup-off').className = mode==='off'
+            ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
+          document.getElementById('btn-lineup-def').className = mode==='def'
+            ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
+          document.getElementById('lineup-legend').innerHTML = mode==='off'
+            ? '{legend_off}' : '{legend_def}';
+        }}
+        </script>"""
 
     # Shot timing
     def tim_table(druzyna):
