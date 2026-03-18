@@ -2549,14 +2549,23 @@ def mecz(match_id):
         legend_def = 'PPP rywala: <span style="color:#1a6b3c">&lt;0.70 dobry</span> / <span style="color:#8b1a1a">≥0.90 słaby</span>'
 
         table_hdr = """<thead><tr>
-          <th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th>
-          <th class="text-center">PPP</th><th class="text-center">NetRtg</th><th class="text-center">eFG%</th>
-          <th class="text-center">2PM/A</th><th class="text-center">3PM/A</th>
-          <th class="text-center">FTM/A</th><th class="text-center">BR</th>
+          <th>Skład</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Liczba posiadań piłki przez tę piątkę">POSS ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Łączna liczba punktów zdobytych przez tę piątkę">PKT ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Points Per Possession — punkty na posiadanie. Im wyższy tym lepsza efektywność ofensywna. ≥0.90 = dobry, &lt;0.70 = słaby">PPP ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Net Rating = ORtg (ofensywny) minus DRtg (defensywny). Wartość dodatnia = piątka wygrywa gdy jest na boisku">NetRtg ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Effective Field Goal % — skuteczność rzutów z wagą dla trójek. Wzór: (2PM + 1.5×3PM) / FGA">eFG% ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Celne / Próby rzutów za 2 punkty">2PM/A ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Celne / Próby rzutów za 3 punkty">3PM/A ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Celne / Próby rzutów wolnych">FTM/A ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Brak Rzutu — liczba strat (utrata piłki bez oddania rzutu)">BR ↕</th>
         </tr></thead>"""
         table_hdr_net = """<thead><tr>
-          <th>Skład</th><th class="text-center">POSS</th><th class="text-center">ORtg</th>
-          <th class="text-center">DRtg</th><th class="text-center">NetRtg</th>
+          <th>Skład</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Liczba posiadań piłki przez tę piątkę">POSS ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Offensive Rating — punkty na 100 posiadań w ataku. Im wyższy tym lepsza ofensywa">ORtg ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Defensive Rating — punkty rywala na 100 posiadań w obronie. Im niższy tym lepsza obrona">DRtg ↕</th>
+          <th class="text-center sortable" onclick="sortTable(this)" title="Net Rating = ORtg minus DRtg. Wartość dodatnia oznacza że piątka wygrywa gdy gra">NetRtg ↕</th>
         </tr></thead>"""
 
         no_data_off = '<tr><td colspan="10" class="text-muted text-center p-3" style="font-size:.82rem">Brak danych OFF — wgraj mecz ponownie.</td></tr>'
@@ -2626,11 +2635,47 @@ def mecz(match_id):
           }};
           document.getElementById('lineup-legend').innerHTML = legends[mode];
         }}
-        document.addEventListener('DOMContentLoaded', function() {{
-          initSortable('tbl-lu-off', 0);
-          initSortable('tbl-lu-def', 0);
-          initSortable('tbl-lu-net', 0);
-        }});
+
+        // Sortowanie tabel piątek
+        var _luSortDir = {{}};
+        function sortTable(th) {{
+          var table = th.closest('table');
+          var tbody = table.querySelector('tbody');
+          var rows  = Array.from(tbody.querySelectorAll('tr'));
+          var colIdx = Array.from(th.parentNode.children).indexOf(th);
+          var key = table.id + '-' + colIdx;
+          _luSortDir[key] = !_luSortDir[key];
+          var asc = _luSortDir[key];
+
+          // Zaktualizuj strzałki
+          th.closest('thead').querySelectorAll('.sortable').forEach(function(h) {{
+            h.textContent = h.textContent.replace(' ▲','').replace(' ▼','').replace(' ↕','') + ' ↕';
+          }});
+          th.textContent = th.textContent.replace(' ↕','') + (asc ? ' ▲' : ' ▼');
+
+          rows.sort(function(a, b) {{
+            var av = a.children[colIdx] ? a.children[colIdx].textContent.trim() : '';
+            var bv = b.children[colIdx] ? b.children[colIdx].textContent.trim() : '';
+            // Usuń znaki % i +
+            av = av.replace('%','').replace('+','');
+            bv = bv.replace('%','').replace('+','');
+            var an = parseFloat(av), bn = parseFloat(bv);
+            if (!isNaN(an) && !isNaN(bn)) return asc ? an-bn : bn-an;
+            return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+          }});
+          rows.forEach(function(r) {{ tbody.appendChild(r); }});
+        }}
+
+        // Style nagłówków sortable
+        (function() {{
+          var style = document.createElement('style');
+          style.textContent = '.sortable {{ cursor:pointer; user-select:none; white-space:nowrap; }} .sortable:hover {{ background:rgba(0,0,0,.06); }}';
+          document.head.appendChild(style);
+          // Bootstrap tooltips dla nagłówków
+          document.querySelectorAll('.sortable[title]').forEach(function(el) {{
+            new bootstrap.Tooltip(el, {{trigger:'hover', placement:'top'}});
+          }});
+        }})();
         </script>"""
 
     # Przebieg meczu
