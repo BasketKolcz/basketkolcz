@@ -2600,194 +2600,107 @@ def mecz(match_id):
         {clutch_stats()}
         <script>
         (function(){{
-          var initialized = false;
+          var _flowInited = false;
+
           function initFlowChart() {{
-            if (initialized) return;
+            if (_flowInited) return;
             var canvas = document.getElementById('flowChart');
             if (!canvas || canvas.offsetWidth === 0) return;
-            initialized = true;
+            _flowInited = true;
+
             var ctx = canvas.getContext('2d');
-          var labels = {labels_js};
-          var diffData = {diff_js};
-          var gtkData = {gtk_js};
-          var oppData = {opp_js};
+            var labels  = {labels_js};
+            var diffData = {diff_js};
+            var gtkData  = {gtk_js};
+            var oppData  = {opp_js};
 
-          // Gradient fill
-          var gradGreen = ctx.createLinearGradient(0,0,0,200);
-          gradGreen.addColorStop(0,'rgba(26,107,60,0.18)');
-          gradGreen.addColorStop(1,'rgba(26,107,60,0)');
-          var gradRed = ctx.createLinearGradient(0,0,0,200);
-          gradRed.addColorStop(0,'rgba(139,26,26,0)');
-          gradRed.addColorStop(1,'rgba(139,26,26,0.18)');
+            var gradGreen = ctx.createLinearGradient(0,0,0,200);
+            gradGreen.addColorStop(0,'rgba(26,107,60,0.18)');
+            gradGreen.addColorStop(1,'rgba(26,107,60,0)');
+            var gradRed = ctx.createLinearGradient(0,0,0,200);
+            gradRed.addColorStop(0,'rgba(139,26,26,0)');
+            gradRed.addColorStop(1,'rgba(139,26,26,0.18)');
 
-          new Chart(ctx, {{
-            type: 'line',
-            data: {{
-              labels: labels,
-              datasets: [{{
-                label: 'Różnica',
-                data: diffData,
-                borderColor: '#1a2b4a',
-                borderWidth: 2,
-                pointRadius: 0,
-                pointHoverRadius: 4,
-                fill: {{
-                  target: {{value: 0}},
-                  above: gradGreen,
-                  below: gradRed
-                }},
-                tension: 0.3
-              }}]
-            }},
-            options: {{
-              responsive: true,
-              maintainAspectRatio: false,
-              interaction: {{mode:'index',intersect:false}},
-              plugins: {{
-                legend: {{display: false}},
-                tooltip: {{
-                  callbacks: {{
-                    title: function(items) {{
-                      var s = items[0].parsed.x;
-                      var q = Math.floor(s/600)+1;
-                      var min = Math.floor((s%600)/60);
-                      var sec = (s%600)%60;
-                      return q+'Q ' + min + ':' + String(sec).padStart(2,'0');
-                    }},
-                    label: function(item) {{
-                      var idx = item.dataIndex;
-                      var d = item.parsed.y;
-                      return 'Różnica: ' + (d>0?'+':'') + d + '  (' + gtkData[idx] + ':' + oppData[idx] + ')';
+            new Chart(ctx, {{
+              type: 'line',
+              data: {{
+                labels: labels,
+                datasets: [{{
+                  label: 'Różnica',
+                  data: diffData,
+                  borderColor: '#1a2b4a',
+                  borderWidth: 2,
+                  pointRadius: 0,
+                  pointHoverRadius: 4,
+                  fill: {{
+                    target: {{value: 0}},
+                    above: gradGreen,
+                    below: gradRed
+                  }},
+                  tension: 0.3
+                }}]
+              }},
+              options: {{
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {{mode:'index', intersect:false}},
+                plugins: {{
+                  legend: {{display: false}},
+                  tooltip: {{
+                    callbacks: {{
+                      title: function(items) {{
+                        var s = items[0].parsed.x;
+                        var q = Math.floor(s/600)+1;
+                        var min = Math.floor((s%600)/60);
+                        var sec = (s%600)%60;
+                        return q+'Q ' + min + ':' + String(sec).padStart(2,'0');
+                      }},
+                      label: function(item) {{
+                        var idx = item.dataIndex;
+                        var d = item.parsed.y;
+                        return 'Różnica: '+(d>0?'+':'')+d+'  ('+gtkData[idx]+':'+oppData[idx]+')';
+                      }}
                     }}
                   }}
-                }}
-              }},
-              scales: {{
-                x: {{
-                  type: 'linear',
-                  min: 0, max: 2400,
-                  ticks: {{
-                    stepSize: 600,
-                    callback: function(v) {{ return ['','1Q','2Q','3Q','4Q'][v/600]||''; }},
-                    font: {{size:10}}
-                  }},
-                  grid: {{color:'rgba(0,0,0,0.06)'}}
                 }},
-                y: {{
-                  min: -{y_max}, max: {y_max},
-                  ticks: {{font:{{size:10}}}},
-                  grid: {{
-                    color: function(ctx) {{
-                      return ctx.tick.value === 0 ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.06)';
+                scales: {{
+                  x: {{
+                    type: 'linear',
+                    min: 0, max: 2400,
+                    ticks: {{
+                      stepSize: 600,
+                      callback: function(v) {{ return ['','1Q','2Q','3Q','4Q'][v/600]||''; }},
+                      font: {{size:10}}
+                    }},
+                    grid: {{color:'rgba(0,0,0,0.06)'}}
+                  }},
+                  y: {{
+                    min: -{y_max}, max: {y_max},
+                    ticks: {{font:{{size:10}}}},
+                    grid: {{
+                      color: function(c) {{
+                        return c.tick.value===0 ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.06)';
+                      }}
                     }}
                   }}
                 }}
               }}
-            }}
-          }});
-          }})(); // koniec initFlowChart
+            }});
+          }}  // koniec initFlowChart
 
-          // Odpal przy kliknięciu zakładki Przebieg
+          // Odpal gdy zakładka Przebieg staje się widoczna
           var tabBtn = document.querySelector('[data-bs-target="#gtk_flow"]');
           if (tabBtn) {{
             tabBtn.addEventListener('shown.bs.tab', function() {{
               initFlowChart();
             }});
           }}
-          // Spróbuj też od razu (jeśli zakładka jest już aktywna)
-          setTimeout(initFlowChart, 100);
+          // Fallback: jeśli zakładka jest już aktywna przy załadowaniu
+          setTimeout(initFlowChart, 200);
         }})();
         </script>"""
 
     # Clutch stats — ostatnie 5 min Q4 przy różnicy ≤5
-    def clutch_stats():
-        if not flow_rows:
-            return '<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych — wgraj mecz ponownie aby wygenerować statystyki clutch.</p>'
-
-        pts_gtk_final = m["wynik_gtk"] or 0
-        pts_opp_final = m["wynik_opp"] or 0
-
-        # Znajdź zdarzenia clutch: Q4, czas_sek <= 300 (ostatnie 5 min), |diff| <= 5
-        # flow_rows: (kwarta, czas_sek, pts_gtk, pts_opp)
-        clutch_events = []
-        for row in flow_rows:
-            q = row["kwarta"]
-            t = row["czas_sek"] or 0
-            pg = row["pts_gtk"]
-            po = row["pts_opp"]
-            if q == 4 and t <= 300 and abs(pg - po) <= 5:
-                clutch_events.append((q, t, pg, po))
-
-        # Czy mecz w ogóle miał clutch time?
-        # Sprawdź czy na początku Q4 różnica była ≤15 (szansa na clutch)
-        q4_events = [r for r in flow_rows if r["kwarta"] == 4]
-        if not q4_events:
-            return ""
-        first_q4_diff = abs(q4_events[0]["pts_gtk"] - q4_events[0]["pts_opp"])
-
-        if not clutch_events and first_q4_diff > 15:
-            return ""  # mecz nie był wyrównany — brak clutch
-
-        # Policz punkty w clutch time
-        if clutch_events:
-            pts_gtk_clutch = clutch_events[-1][2] - clutch_events[0][2]
-            pts_opp_clutch = clutch_events[-1][3] - clutch_events[0][3]
-            clutch_poss = len(clutch_events)
-        else:
-            pts_gtk_clutch = pts_opp_clutch = clutch_poss = 0
-
-        # Kto prowadził na początku clutch i jak mecz się skończył
-        if clutch_events:
-            start_diff = clutch_events[0][2] - clutch_events[0][3]
-            end_diff = pts_gtk_final - pts_opp_final
-        else:
-            start_diff = end_diff = pts_gtk_final - pts_opp_final
-
-        clutch_result = "Wygrana w clutch" if end_diff > 0 else ("Porażka w clutch" if end_diff < 0 else "Remis")
-        result_color = "#1a6b3c" if end_diff > 0 else ("#8b1a1a" if end_diff < 0 else "#888")
-
-        if not clutch_events:
-            return f"""
-            <div style="margin-top:16px;padding-top:14px;border-top:.5px solid var(--color-border-tertiary)">
-              <div style="font-size:11px;font-weight:600;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Clutch time (4Q, różnica ≤5)</div>
-              <p style="font-size:.82rem;color:var(--color-text-tertiary)">Brak momentów clutch w tym meczu — prowadzenie było zbyt duże.</p>
-            </div>"""
-
-        gtk_clutch_ppp = f"{pts_gtk_clutch/clutch_poss:.2f}" if clutch_poss else "—"
-        opp_clutch_ppp = f"{pts_opp_clutch/clutch_poss:.2f}" if clutch_poss else "—"
-
-        return f"""
-        <div style="margin-top:16px;padding-top:14px;border-top:.5px solid var(--color-border-tertiary)">
-          <div style="font-size:11px;font-weight:600;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">
-            Clutch time — 4Q ostatnie 5 min przy różnicy ≤5 pkt
-            <span style="font-weight:700;color:{result_color};margin-left:10px;font-size:12px;text-transform:none">{clutch_result}</span>
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px">
-            <div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;text-align:center">
-              <div style="font-size:20px;font-weight:500;color:#1a6b3c">{pts_gtk_clutch}</div>
-              <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase">PKT GTK</div>
-            </div>
-            <div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;text-align:center">
-              <div style="font-size:20px;font-weight:500;color:#8b1a1a">{pts_opp_clutch}</div>
-              <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase">PKT Rywal</div>
-            </div>
-            <div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;text-align:center">
-              <div style="font-size:20px;font-weight:500;color:var(--color-text-primary)">{gtk_clutch_ppp}</div>
-              <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase">PPP GTK</div>
-            </div>
-            <div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;text-align:center">
-              <div style="font-size:20px;font-weight:500;color:var(--color-text-primary)">{clutch_poss}</div>
-              <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase">Akcji</div>
-            </div>
-          </div>
-          <div style="font-size:.75rem;color:var(--color-text-tertiary)">
-            Różnica na wejściu w clutch:
-            <b style="color:{'#1a6b3c' if start_diff>0 else '#8b1a1a'}">{'+' if start_diff>0 else ''}{start_diff}</b>
-            → wynik końcowy: <b style="color:{result_color}">{pts_gtk_final}:{pts_opp_final}</b>
-          </div>
-        </div>"""
-
-    # Momentum kwart
     def momentum_table():
         if not flow_rows:
             return '<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych — wgraj mecz ponownie aby wygenerować momentum kwart.</p>'
