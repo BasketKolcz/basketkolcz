@@ -784,8 +784,8 @@ def nav(active="home"):
 
     items = [
         ("home",     "/",          "🏠", "Strona główna"),
-        ("history",  "/historia",  "📋", "Historia meczów"),
         ("season",   "/sezon",     "📊", "Statystyki drużyny"),
+        ("history",  "/historia",  "📋", "Historia meczów"),
         ("settings", "/ustawienia","⚙️", "Ustawienia"),
     ]
     team_items = [
@@ -798,6 +798,9 @@ def nav(active="home"):
         links += (f'<a href="{href}" class="{cls}" data-label="{label}">'
                   f'<span class="icon">{icon}</span>'
                   f'<span class="brand-text">{label}</span></a>')
+        # Wstaw Drużyna zaraz po Stronie głównej
+        if key == "home":
+            links += "##TEAM##"
 
     # Drużyna — sekcja z podmenu
     team_open = active in ("players","roster")
@@ -843,8 +846,7 @@ def nav(active="home"):
   </div>
   <div class="nav-season brand-text"><strong>{gtk_name}</strong>Sezon {season}</div>
   <div class="nav-section brand-text">Nawigacja</div>
-  {links}
-  {team_section}
+  {links.replace("##TEAM##", team_section)}
 </div>
 
 <script>
@@ -4428,7 +4430,9 @@ def profil_zawodnika(roster_id):
             <td class="text-center"><b>{efg_m}</b></td>
             <td class="text-center">{usg_m}</td>
             <td class="text-center" style="color:#888">{avg_t_m}</td>
-            <td class="text-center">{ast}</td><td class="text-center">{br}</td><td class="text-center">{fin}</td>
+            <td class="text-center">{ast}</td>
+            <td class="text-center">{int(r.get("oreb",0) or 0) + int(r.get("dreb",0) or 0)}</td>
+            <td class="text-center">{br}</td><td class="text-center">{fin}</td>
         </tr>"""
 
     # Dane JS — kolejność odwrócona (najstarszy→najnowszy = lewa→prawa)
@@ -4487,16 +4491,7 @@ def profil_zawodnika(roster_id):
 <div class="row g-3 mb-3">
   <div class="col-lg-7">
     <div class="card h-100"><div class="card-body p-2">
-      <div class="d-flex align-items-center justify-content-between mb-1">
-        <div class="section-hdr mb-0" id="chartMainTitle">Punkty per mecz</div>
-        <div class="btn-group btn-group-sm" role="group">
-          <button type="button" class="btn btn-primary active btn-sm" id="btnPTS" onclick="switchMetric('PTS')">PTS</button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" id="btnAST" onclick="switchMetric('AST')">AST</button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" id="btnREB" onclick="switchMetric('REB')">REB</button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" id="btnBR" onclick="switchMetric('BR')">BR</button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" id="btnFIN" onclick="switchMetric('FIN')">FIN</button>
-        </div>
-      </div>
+      <div class="section-hdr mb-1" id="chartMainTitle">Punkty per mecz</div>
       <div style="position:relative;height:180px"><canvas id="chartMain"></canvas></div>
     </div></div>
   </div>
@@ -4515,11 +4510,14 @@ def profil_zawodnika(roster_id):
   <table class="table table-hover mb-0" style="font-size:.82rem">
     <thead><tr>
       <th>Rywal</th><th>Data</th><th class="text-center">Wynik</th>
-      <th class="text-center">PTS</th>
+      <th class="text-center" id="thPTS" onclick="switchMetric('PTS')" style="cursor:pointer;background:#1a2b4a;color:#fff;user-select:none">PTS</th>
       <th class="text-center">2PM/A</th><th class="text-center">3PM/A</th><th class="text-center">FTM/A</th>
       <th class="text-center">eFG%</th><th class="text-center">USG%</th>
       <th class="text-center">Śr.czas</th>
-      <th class="text-center">AST</th><th class="text-center">BR</th><th class="text-center">FIN</th>
+      <th class="text-center" id="thAST" onclick="switchMetric('AST')" style="cursor:pointer;user-select:none">AST</th>
+      <th class="text-center" id="thREB" onclick="switchMetric('REB')" style="cursor:pointer;user-select:none">REB</th>
+      <th class="text-center" id="thBR" onclick="switchMetric('BR')" style="cursor:pointer;user-select:none">BR</th>
+      <th class="text-center" id="thFIN" onclick="switchMetric('FIN')" style="cursor:pointer;user-select:none">FIN</th>
     </tr></thead>
     <tbody>{match_rows_rev}</tbody>
   </table>
@@ -4570,11 +4568,10 @@ def profil_zawodnika(roster_id):
 
   function switchMetric(metric) {{
     ['PTS','AST','REB','BR','FIN'].forEach(function(m) {{
-      var btn = document.getElementById('btn' + m);
-      if (btn) {{
-        btn.className = (m === metric)
-          ? 'btn btn-primary active btn-sm'
-          : 'btn btn-outline-secondary btn-sm';
+      var th = document.getElementById('th' + m);
+      if (th) {{
+        th.style.background = (m === metric) ? '#1a2b4a' : '';
+        th.style.color = (m === metric) ? '#fff' : '';
       }}
     }});
     var titleEl = document.getElementById('chartMainTitle');
