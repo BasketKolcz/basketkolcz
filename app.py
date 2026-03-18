@@ -125,6 +125,14 @@ def init_db():
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS runda VARCHAR(50) DEFAULT ''",
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS miejsce VARCHAR(20) DEFAULT ''",
         "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS roster_id INTEGER REFERENCES roster(id) ON DELETE SET NULL",
+        """CREATE TABLE IF NOT EXISTS score_flow (
+            id SERIAL PRIMARY KEY,
+            match_id INTEGER REFERENCES matches(id) ON DELETE CASCADE,
+            kwarta INTEGER NOT NULL,
+            czas_sek REAL NOT NULL,
+            pts_gtk INTEGER NOT NULL,
+            pts_opp INTEGER NOT NULL
+        )""",
     ]
     for sql in alters:
         try:
@@ -191,6 +199,7 @@ def parse_team_sheet(ws):
         "players": defaultdict(lambda: {"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"fd":0,"br":0,"finishes":0,"ast":0,"oreb":0,"dreb":0}),
         "timing":  {b: {"2PT":{"made":0,"miss":0},"3PT":{"made":0,"miss":0}} for b in BUCKETS},
         "lineups": defaultdict(lambda: {"pts":0,"poss":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"br":0,"fd":0}),
+        "flow":    [],  # lista (kwarta, czas_sek, pts_skumulowane) — każda akcja punktująca
     }
     current_q = 1
     current_lineup = []
@@ -305,6 +314,11 @@ def parse_team_sheet(ws):
                     stats["players"][finisher]["fd"]+=1
 
             q["pts"] += pts
+
+            # Flow tracking — zapisz każdą akcję z punktami
+            if pts > 0:
+                total_pts = sum(stats["quarter"][qn].get("pts",0) for qn in range(1,5))
+                stats["flow"].append((current_q, t_val, total_pts))
 
             # Lineup tracking
             if len(current_lineup) == 5:
@@ -447,6 +461,42 @@ def save_match_to_db(przeciwnik, nazwa_gtk, sezon, data_meczu, stats_gtk, stats_
                   ld["p3m"], ld["p3a"],
                   ld["ftm"], ld["fta"],
                   ld["br"],  ld["fd"]))
+
+    # Score flow — przebieg meczu (punkty skumulowane per akcja)
+    try:
+        pts_gtk_cum = 0
+        pts_opp_cum = 0
+        # Połącz flow obu drużyn i posortuj po kwarcie i czasie
+        flow_gtk = [(q, t, p, "gtk") for q, t, p in stats_gtk["flow"]]
+        flow_opp = [(q, t, p, "opp") for q, t, p in stats_opp["flow"]]
+        # Rekonstruuj skumulowane — flow zawiera już skumulowane per drużyna
+        # Zapisujemy snapshoty: po każdej akcji punktującej GTK lub OPP
+        gtk_pts_by_event = [(q, t, p) for q, t, p in stats_gtk["flow"]]
+        opp_pts_by_event = [(q, t, p) for q, t, p in stats_opp["flow"]]
+        # Merge obu list po kwarcie/czasie, interpolując brakującą drużynę
+        all_events = []
+        gi, oi = 0, 0
+        g_cur, o_cur = 0, 0
+        gtk_list = gtk_pts_by_event
+        opp_list = opp_pts_by_event
+        while gi < len(gtk_list) or oi < len(opp_list):
+            g_has = gi < len(gtk_list)
+            o_has = oi < len(opp_list)
+            if g_has and (not o_has or (gtk_list[gi][0], gtk_list[gi][1]) <= (opp_list[oi][0], opp_list[oi][1])):
+                g_cur = gtk_list[gi][2]
+                all_events.append((gtk_list[gi][0], gtk_list[gi][1], g_cur, o_cur))
+                gi += 1
+            else:
+                o_cur = opp_list[oi][2]
+                all_events.append((opp_list[oi][0], opp_list[oi][1], g_cur, o_cur))
+                oi += 1
+        for q, t, pg, po in all_events:
+            cur.execute("""
+                INSERT INTO score_flow (match_id, kwarta, czas_sek, pts_gtk, pts_opp)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (match_id, q, t, pg, po))
+    except Exception:
+        pass
 
     db.commit()
     cur.close()
@@ -1904,6 +1954,15 @@ def mecz(match_id):
     except:
         all_lineups_def = []
 
+    # Score flow
+    try:
+        cur.execute("""SELECT kwarta, czas_sek, pts_gtk, pts_opp
+                       FROM score_flow WHERE match_id=%s
+                       ORDER BY kwarta, czas_sek""", (match_id,))
+        flow_rows = list(cur.fetchall())
+    except:
+        flow_rows = []
+
     # Mapa roster_id → "Nazwisko I." dla GTK
     try:
         cur.execute("""SELECT ps.id as ps_id, r.imie, r.nazwisko
@@ -1989,13 +2048,19 @@ def mecz(match_id):
         players = [r for r in all_players if r["druzyna"]==druzyna]
         if not players:
             return '<p class="text-muted p-2" style="font-size:.82rem">Brak danych zawodników</p>'
+
+        # Poss drużyny (do USG%)
+        team_poss = sum(r.get("poss",0) or 0 for r in all_stats if r["druzyna"]==druzyna)
+
         rows = ""
         for pd in sorted(players, key=lambda x: x["pts"], reverse=True):
             fga = pd.get("p2a",0)+pd.get("p3a",0)
             fta = pd.get("fta",0); ftm = pd.get("ftm",0)
             pm2 = pd.get("p2m",0); pm3 = pd.get("p3m",0)
+            br  = pd.get("br",0) or 0
             efg = f"{(pm2+1.5*pm3)/fga:.0%}" if fga else "-"
             ts  = f"{pd.get('pts',0)/(2*(fga+0.44*fta)):.0%}" if (fga+fta) else "-"
+            usg = f"{(fga + 0.44*fta + br) / team_poss:.1%}" if team_poss else "-"
             # Pokaż nazwisko jeśli przypisany (tylko GTK), inaczej numer
             if druzyna == "gtk" and pd["id"] in roster_map:
                 id_cell = f'<td class="fw-bold">#{pd["nr"]} {roster_map[pd["id"]]}</td>'
@@ -2008,13 +2073,14 @@ def mecz(match_id):
                 <td>{pm3}/{pd.get('p3a',0)}</td>
                 <td>{ftm}/{fta}</td>
                 <td><b>{efg}</b></td><td>{ts}</td>
+                <td><b>{usg}</b></td>
                 <td>{pd.get('ast',0)}</td><td>{pd.get('oreb',0)}</td>
                 <td>{pd.get('dreb',0)}</td><td>{pd.get('br',0)}</td>
                 <td>{pd.get('finishes',0)}</td>
             </tr>"""
         hdr_id = "Zawodnik" if druzyna == "gtk" and roster_map else "#"
         return f"""<div class="table-responsive"><table class="table table-hover mb-0">
-            <thead><tr><th>{hdr_id}</th><th>PTS</th><th>2PM/A</th><th>3PM/A</th><th>FTM/A</th><th>eFG%</th><th>TS%</th><th>AST</th><th>OREB</th><th>DREB</th><th>BR</th><th>FIN</th></tr></thead>
+            <thead><tr><th>{hdr_id}</th><th>PTS</th><th>2PM/A</th><th>3PM/A</th><th>FTM/A</th><th>eFG%</th><th>TS%</th><th>USG%</th><th>AST</th><th>OREB</th><th>DREB</th><th>BR</th><th>FIN</th></tr></thead>
             <tbody>{rows}</tbody></table></div>"""
 
     # Piątki
@@ -2108,6 +2174,185 @@ def mecz(match_id):
         }});
         </script>"""
 
+    # Przebieg meczu
+    def flow_chart():
+        if not flow_rows:
+            return '<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych przebiegu — wgraj mecz ponownie aby wygenerować.</p>'
+
+        # Konwertuj do JSON dla Chart.js
+        # Dodaj punkt startowy (0,0,0) i końcowy
+        pts_final_gtk = m["wynik_gtk"] or 0
+        pts_final_opp = m["wynik_opp"] or 0
+
+        # Punkty na osi X: globalny czas (kwarta*600 + (600-czas_sek))
+        # W koszykówce czas biegnie od 10:00 do 0:00 per kwartę
+        labels = []
+        diff_data = []
+        gtk_data = []
+        opp_data = []
+
+        # Punkt startowy
+        labels.append(0)
+        diff_data.append(0)
+        gtk_data.append(0)
+        opp_data.append(0)
+
+        for row in flow_rows:
+            q = row["kwarta"]
+            t = row["czas_sek"] or 0
+            # Globalny czas: kwarta 1 = 0-600s, kwarta 2 = 600-1200s itd.
+            # czas_sek to ile sekund pozostało w kwarcie → upłynęło = 600-t
+            elapsed = (q - 1) * 600 + max(0, 600 - int(t))
+            labels.append(elapsed)
+            g = row["pts_gtk"]
+            o = row["pts_opp"]
+            diff_data.append(g - o)
+            gtk_data.append(g)
+            opp_data.append(o)
+
+        # Punkt końcowy
+        labels.append(2400)
+        diff_data.append(pts_final_gtk - pts_final_opp)
+        gtk_data.append(pts_final_gtk)
+        opp_data.append(pts_final_opp)
+
+        # Wykryj runy (serie ≥5 pkt bez odpowiedzi)
+        runs_gtk = []
+        runs_opp = []
+        streak_g = streak_o = 0
+        streak_g_start = streak_o_start = 0
+        prev_g = prev_o = 0
+        for i, (g, o) in enumerate(zip(gtk_data, opp_data)):
+            dg = g - prev_g
+            do_ = o - prev_o
+            if dg > 0 and do_ == 0:
+                if streak_g == 0: streak_g_start = labels[i]
+                streak_g += dg; streak_o = 0
+            elif do_ > 0 and dg == 0:
+                if streak_o == 0: streak_o_start = labels[i]
+                streak_o += do_; streak_g = 0
+            else:
+                if streak_g >= 5: runs_gtk.append((streak_g_start, labels[i], streak_g))
+                if streak_o >= 5: runs_opp.append((streak_o_start, labels[i], streak_o))
+                streak_g = streak_o = 0
+            prev_g, prev_o = g, o
+
+        # Przygotuj annotations dla runs
+        annotations_js = ""
+        for s, e, pts in runs_gtk[:3]:
+            mid = (s + e) // 2
+            annotations_js += f"""
+            'run_g_{s}': {{type:'box',xMin:{s},xMax:{e},yMin:-2,yMax:2,backgroundColor:'rgba(26,107,60,0.08)',borderColor:'rgba(26,107,60,0.3)',borderWidth:1,label:{{display:true,content:'GTK {pts}-0',font:{{size:9}},color:'#1a6b3c',position:'start'}}}},"""
+        for s, e, pts in runs_opp[:3]:
+            annotations_js += f"""
+            'run_o_{s}': {{type:'box',xMin:{s},xMax:{e},yMin:-2,yMax:2,backgroundColor:'rgba(139,26,26,0.08)',borderColor:'rgba(139,26,26,0.3)',borderWidth:1,label:{{display:true,content:'OPP {pts}-0',font:{{size:9}},color:'#8b1a1a',position:'start'}}}},"""
+
+        import json
+        labels_js = json.dumps(labels)
+        diff_js = json.dumps(diff_data)
+        gtk_js = json.dumps(gtk_data)
+        opp_js = json.dumps(opp_data)
+        max_diff = max(abs(d) for d in diff_data) if diff_data else 10
+        y_max = max(max_diff + 5, 10)
+
+        return f"""
+        <div style="font-size:.72rem;color:#aaa;margin-bottom:.5rem">
+          Różnica punktowa w czasie meczu ·
+          <span style="color:#1a6b3c;font-weight:600">{gtk_name}</span> vs
+          <span style="color:#8b1a1a;font-weight:600">{name_opp}</span>
+        </div>
+        <div style="position:relative;height:200px">
+          <canvas id="flowChart"></canvas>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:8px;font-size:.75rem;flex-wrap:wrap">
+          <div style="font-weight:600;color:var(--color-text-secondary)">Najdłuższe runy:</div>
+          {''.join(f'<span style="background:#e8f5e9;color:#1a5c2a;padding:2px 8px;border-radius:12px">{p}-0 GTK</span>' for _,__,p in sorted(runs_gtk,key=lambda x:-x[2])[:3])}
+          {''.join(f'<span style="background:#ffebee;color:#8b1a1a;padding:2px 8px;border-radius:12px">{p}-0 OPP</span>' for _,__,p in sorted(runs_opp,key=lambda x:-x[2])[:3])}
+        </div>
+        <script>
+        (function(){{
+          var ctx = document.getElementById('flowChart').getContext('2d');
+          var labels = {labels_js};
+          var diffData = {diff_js};
+          var gtkData = {gtk_js};
+          var oppData = {opp_js};
+
+          // Gradient fill
+          var gradGreen = ctx.createLinearGradient(0,0,0,200);
+          gradGreen.addColorStop(0,'rgba(26,107,60,0.18)');
+          gradGreen.addColorStop(1,'rgba(26,107,60,0)');
+          var gradRed = ctx.createLinearGradient(0,0,0,200);
+          gradRed.addColorStop(0,'rgba(139,26,26,0)');
+          gradRed.addColorStop(1,'rgba(139,26,26,0.18)');
+
+          new Chart(ctx, {{
+            type: 'line',
+            data: {{
+              labels: labels,
+              datasets: [{{
+                label: 'Różnica',
+                data: diffData,
+                borderColor: '#1a2b4a',
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                fill: {{
+                  target: {{value: 0}},
+                  above: gradGreen,
+                  below: gradRed
+                }},
+                tension: 0.3
+              }}]
+            }},
+            options: {{
+              responsive: true,
+              maintainAspectRatio: false,
+              interaction: {{mode:'index',intersect:false}},
+              plugins: {{
+                legend: {{display: false}},
+                tooltip: {{
+                  callbacks: {{
+                    title: function(items) {{
+                      var s = items[0].parsed.x;
+                      var q = Math.floor(s/600)+1;
+                      var min = Math.floor((s%600)/60);
+                      var sec = (s%600)%60;
+                      return q+'Q ' + min + ':' + String(sec).padStart(2,'0');
+                    }},
+                    label: function(item) {{
+                      var idx = item.dataIndex;
+                      var d = item.parsed.y;
+                      return 'Różnica: ' + (d>0?'+':'') + d + '  (' + gtkData[idx] + ':' + oppData[idx] + ')';
+                    }}
+                  }}
+                }}
+              }},
+              scales: {{
+                x: {{
+                  type: 'linear',
+                  min: 0, max: 2400,
+                  ticks: {{
+                    stepSize: 600,
+                    callback: function(v) {{ return ['','1Q','2Q','3Q','4Q'][v/600]||''; }},
+                    font: {{size:10}}
+                  }},
+                  grid: {{color:'rgba(0,0,0,0.06)'}}
+                }},
+                y: {{
+                  min: -{y_max}, max: {y_max},
+                  ticks: {{font:{{size:10}}}},
+                  grid: {{
+                    color: function(ctx) {{
+                      return ctx.tick.value === 0 ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.06)';
+                    }}
+                  }}
+                }}
+              }}
+            }}
+          }});
+        }})();
+        </script>"""
+
     # Shot timing
     def tim_table(druzyna):
         rows = ""
@@ -2169,12 +2414,14 @@ def mecz(match_id):
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#gtk_q">Per kwarta</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_p">Zawodnicy</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_l">Piątki</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_flow">Przebieg</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_t">Timing rzutów</button></li>
   </ul>
   <div class="tab-content">
     <div class="tab-pane fade show active" id="gtk_q"><div class="card mt-1"><div class="card-body p-2">{q_table('gtk')}</div></div></div>
     <div class="tab-pane fade" id="gtk_p"><div class="card mt-1"><div class="card-body p-2">{p_table('gtk')}</div></div></div>
     <div class="tab-pane fade" id="gtk_l"><div class="card mt-1"><div class="card-body p-2">{lineup_table()}</div></div></div>
+    <div class="tab-pane fade" id="gtk_flow"><div class="card mt-1"><div class="card-body p-2">{flow_chart()}</div></div></div>
     <div class="tab-pane fade" id="gtk_t"><div class="card mt-1"><div class="card-body p-2">{tim_table('gtk')}</div></div></div>
   </div>
 </div>
@@ -2907,7 +3154,8 @@ def zawodnicy():
                 SUM(ast) as ast, SUM(oreb) as oreb, SUM(dreb) as dreb,
                 SUM(br) as br, SUM(fd) as fd, SUM(finishes) as finishes,
                 COUNT(DISTINCT match_id) as mecze,
-                BOOL_OR(ma_nieprzypisane) as ma_nieprzypisane
+                BOOL_OR(ma_nieprzypisane) as ma_nieprzypisane,
+                SUM(team_poss) as team_poss
             FROM (
                 SELECT
                     CASE WHEN r.id IS NOT NULL THEN r.id::text
@@ -2922,12 +3170,18 @@ def zawodnicy():
                     SUM(ps.ftm) as ftm, SUM(ps.fta) as fta,
                     SUM(ps.ast) as ast, SUM(ps.oreb) as oreb, SUM(ps.dreb) as dreb,
                     SUM(ps.br) as br, SUM(ps.fd) as fd, SUM(ps.finishes) as finishes,
-                    (r.id IS NULL) as ma_nieprzypisane
+                    (r.id IS NULL) as ma_nieprzypisane,
+                    COALESCE(mp.poss, 0) as team_poss
                 FROM player_stats ps
                 JOIN matches m ON ps.match_id=m.id
                 LEFT JOIN roster r ON ps.roster_id=r.id
+                LEFT JOIN (
+                    SELECT match_id, SUM(poss) as poss
+                    FROM match_stats WHERE druzyna='gtk'
+                    GROUP BY match_id
+                ) mp ON mp.match_id=ps.match_id
                 WHERE m.sezon=%s AND ps.druzyna='gtk'
-                GROUP BY r.id, r.imie, r.nazwisko, ps.nr, ps.match_id
+                GROUP BY r.id, r.imie, r.nazwisko, ps.nr, ps.match_id, mp.poss
             ) sub
             GROUP BY grp_id, nazwa
             ORDER BY BOOL_OR(ma_nieprzypisane) ASC, SUM(pts) DESC
@@ -2962,10 +3216,12 @@ def zawodnicy():
         pm2 = int(p.get("p2m",0) or 0)
         pm3 = int(p.get("p3m",0) or 0)
         pts = int(p.get("pts",0) or 0)
-        efg = f"{(pm2+1.5*pm3)/fga:.1%}" if fga else "-"
-        ts  = f"{pts/(2*(fga+0.44*fta)):.1%}" if (fga+fta) else "-"
-        n   = int(p.get("mecze",1) or 1)
-        ppg = f"{pts/n:.1f}"
+        efg  = f"{(pm2+1.5*pm3)/fga:.1%}" if fga else "-"
+        ts   = f"{pts/(2*(fga+0.44*fta)):.1%}" if (fga+fta) else "-"
+        n    = int(p.get("mecze",1) or 1)
+        ppg  = f"{pts/n:.1f}"
+        tposs = int(p.get("team_poss",0) or 0)
+        usg  = f"{(fga + 0.44*fta + int(p.get('br',0) or 0)) / tposs:.1%}" if tposs else "-"
         nie = p.get('ma_nieprzypisane')
         nazwa = p.get('nazwa','?')
         bg = "background:#fff8e1" if nie else ("background:#f8f9ff" if i%2==0 else "")
@@ -2983,6 +3239,7 @@ def zawodnicy():
             <td>{int(p.get('dreb',0) or 0)}</td>
             <td>{int(p.get('br',0) or 0)}</td>
             <td>{int(p.get('finishes',0) or 0)}</td>
+            <td><b>{usg}</b></td>
             <td class="fw-bold" style="color:#1a2b4a">{pts}</td>
             <td style="font-size:.78rem;color:#888">{n}</td>
         </tr>"""
@@ -3020,11 +3277,12 @@ def zawodnicy():
           {th('DREB',9)}
           {th('BR',10)}
           {th('FIN',11)}
-          {th('PTS',12)}
-          {th('Mecze',13)}
+          {th('USG%',12)}
+          {th('PTS',13)}
+          {th('Mecze',14)}
         </tr></thead>
         <tbody id="zawBody">
-          {rows if rows else '<tr><td colspan="14" class="text-center text-muted py-4">Brak danych zawodników</td></tr>'}
+          {rows if rows else '<tr><td colspan="15" class="text-center text-muted py-4">Brak danych zawodników</td></tr>'}
         </tbody>
       </table>
     </div>
