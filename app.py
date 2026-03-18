@@ -4340,8 +4340,8 @@ def profil_zawodnika(roster_id):
         kpi(ftpct,"FT%",     "#1a2b4a", "rzuty wolne") +
         kpi(avg_t_tot,"Śr.czas","#555", "średni czas akcji") +
         kpi(f"{ast_tot/n:.1f}", "APG",  "#1a2b4a", "asysty/mecz") +
-        kpi(f"{br_tot/n:.1f}",  "BPG",  "#1a2b4a", "straty/mecz") +
-        kpi(f"{fin_tot/n:.1f}", "FIN/G","#1a2b4a", "wykończenia/mecz") +
+        kpi(f"{br_tot/n:.1f}",  "BR",    "#1a2b4a", "straty") +
+        kpi(f"{fin_tot/n:.1f}", "FIN",   "#1a2b4a", "wykończenia") +
         kpi(str(n), "Mecze",  "#888")
     )
 
@@ -4510,11 +4510,11 @@ def profil_zawodnika(roster_id):
 
 <!-- TABELA MECZÓW — Zmiana 3: najnowszy na górze -->
 <div class="card mb-3"><div class="card-body p-2">
-  <div class="section-hdr">Przebieg sezonu — mecz po meczu <span style="font-size:.72rem;color:#aaa;font-weight:400">(najnowszy ↑ / najstarszy ↓)</span></div>
+  <div class="section-hdr">Przebieg sezonu — mecz po meczu</div>
   <div class="table-responsive">
   <table class="table table-hover mb-0" style="font-size:.82rem">
     <thead><tr>
-      <th>Rywal</th><th>Data</th><th>Wynik</th>
+      <th>Rywal</th><th>Data</th><th class="text-center">Wynik</th>
       <th class="text-center">PTS</th>
       <th class="text-center">2PM/A</th><th class="text-center">3PM/A</th><th class="text-center">FTM/A</th>
       <th class="text-center">eFG%</th><th class="text-center">USG%</th>
@@ -4531,59 +4531,105 @@ def profil_zawodnika(roster_id):
 (function() {{
   var labels = {labels_js};
   var nMecze = labels.length;
-  // Zmiana 5: szerokość słupka proporcjonalna, max 50px
   var barW = Math.max(16, Math.min(50, Math.floor(280 / Math.max(nMecze, 1))));
 
-  var allData = {{
-    'PTS': {{ data: {pts_js}, avg: {avg_pts}, color: d => d >= 20 ? '#1a6b3c' : d >= 15 ? '#378ADD' : '#1a2b4a', title: 'Punkty per mecz' }},
-    'AST': {{ data: {ast_js}, avg: null, color: () => '#378ADD', title: 'Asysty per mecz' }},
-    'REB': {{ data: {reb_js}, avg: null, color: () => '#1D9E75', title: 'Zbiórki per mecz' }},
-    'BR':  {{ data: {br_js},  avg: null, color: () => '#D85A30', title: 'Straty per mecz' }},
-    'FIN': {{ data: {fin_js}, avg: null, color: () => '#1a2b4a', title: 'Wykończenia per mecz' }},
+  var dataSets = {{
+    'PTS': {pts_js},
+    'AST': {ast_js},
+    'REB': {reb_js},
+    'BR':  {br_js},
+    'FIN': {fin_js}
   }};
+  var titles = {{
+    'PTS': 'Punkty per mecz',
+    'AST': 'Asysty per mecz',
+    'REB': 'Zbiórki per mecz',
+    'BR':  'Straty per mecz',
+    'FIN': 'Wykończenia per mecz'
+  }};
+  var colors = {{
+    'PTS': '#1a2b4a',
+    'AST': '#378ADD',
+    'REB': '#1D9E75',
+    'BR':  '#D85A30',
+    'FIN': '#555555'
+  }};
+  var ptsAvg = {avg_pts};
 
   var mainChart = null;
 
-  function buildMainChart(metric) {{
-    var cfg = allData[metric];
-    var avg = cfg.avg != null ? cfg.avg : (cfg.data.reduce((a,b)=>a+b,0)/Math.max(cfg.data.length,1));
-    var datasets = [{{
-      type: 'bar', label: metric, data: cfg.data,
-      backgroundColor: cfg.data.map(v => cfg.color(v)),
-      borderRadius: 3, barThickness: barW, order: 2
-    }}];
-    if (cfg.data.length > 1) {{
-      datasets.push({{
-        type: 'line', label: 'Średnia', data: labels.map(() => Math.round(avg*10)/10),
-        borderColor: '#D85A30', borderWidth: 2, borderDash: [4,3],
-        pointRadius: 0, fill: false, order: 1
-      }});
+  function getBarColors(metric, data) {{
+    if (metric !== 'PTS') {{
+      var c = colors[metric];
+      return data.map(function() {{ return c; }});
     }}
-    return {{
-      type: 'bar', data: {{ labels: labels, datasets: datasets }},
-      options: {{
-        responsive: true, maintainAspectRatio: false,
-        plugins: {{ legend: {{display: false}},
-          tooltip: {{callbacks: {{label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y}}}} }},
-        scales: {{
-          x: {{ ticks: {{font: {{size: 9}}, maxRotation: 40, autoSkip: false}} }},
-          y: {{ min: 0, ticks: {{font: {{size: 10}}}}, grid: {{color: 'rgba(0,0,0,0.05)'}} }}
-        }}
-      }}
-    }};
+    return data.map(function(v) {{
+      return v >= 20 ? '#1a6b3c' : v >= 15 ? '#378ADD' : '#1a2b4a';
+    }});
   }}
 
   function switchMetric(metric) {{
-    ['PTS','AST','REB','BR','FIN'].forEach(m => {{
-      var btn = document.getElementById('btn'+m);
-      if (btn) btn.className = m===metric ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
+    ['PTS','AST','REB','BR','FIN'].forEach(function(m) {{
+      var btn = document.getElementById('btn' + m);
+      if (btn) {{
+        btn.className = (m === metric)
+          ? 'btn btn-primary active btn-sm'
+          : 'btn btn-outline-secondary btn-sm';
+      }}
     }});
-    document.getElementById('chartMainTitle').textContent = allData[metric].title;
-    if (mainChart) mainChart.destroy();
-    mainChart = new Chart(document.getElementById('chartMain').getContext('2d'), buildMainChart(metric));
+    var titleEl = document.getElementById('chartMainTitle');
+    if (titleEl) titleEl.textContent = titles[metric];
+
+    if (mainChart) {{ mainChart.destroy(); mainChart = null; }}
+
+    var data = dataSets[metric];
+    var avg = data.reduce(function(a,b){{return a+b;}}, 0) / Math.max(data.length, 1);
+    if (metric === 'PTS') avg = ptsAvg;
+
+    var datasets = [{{
+      type: 'bar',
+      label: metric,
+      data: data,
+      backgroundColor: getBarColors(metric, data),
+      borderRadius: 3,
+      barThickness: barW,
+      order: 2
+    }}];
+    if (data.length > 1) {{
+      datasets.push({{
+        type: 'line',
+        label: 'Średnia',
+        data: labels.map(function() {{ return Math.round(avg * 10) / 10; }}),
+        borderColor: '#D85A30',
+        borderWidth: 2,
+        borderDash: [4, 3],
+        pointRadius: 0,
+        fill: false,
+        order: 1
+      }});
+    }}
+
+    var canvas = document.getElementById('chartMain');
+    if (!canvas) return;
+    mainChart = new Chart(canvas.getContext('2d'), {{
+      type: 'bar',
+      data: {{ labels: labels, datasets: datasets }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {{
+          legend: {{ display: false }},
+          tooltip: {{ callbacks: {{ label: function(ctx) {{ return ctx.dataset.label + ': ' + ctx.parsed.y; }} }} }}
+        }},
+        scales: {{
+          x: {{ ticks: {{ font: {{ size: 9 }}, maxRotation: 40, autoSkip: false }} }},
+          y: {{ min: 0, ticks: {{ font: {{ size: 10 }} }}, grid: {{ color: 'rgba(0,0,0,0.05)' }} }}
+        }}
+      }}
+    }});
   }}
 
-  // Inicjalizacja domyślna: PTS
+  // Inicjalizacja po załadowaniu Chart.js
   switchMetric('PTS');
 
   // Wykres skuteczności
@@ -4601,12 +4647,13 @@ def profil_zawodnika(roster_id):
     }},
     options: {{
       responsive: true, maintainAspectRatio: false,
-      plugins: {{legend: {{display: false}},
-        tooltip: {{callbacks: {{label: ctx => ctx.parsed.y.toFixed(1) + '%'}}}}}},
+      plugins: {{
+        legend: {{ display: false }},
+        tooltip: {{ callbacks: {{ label: function(ctx) {{ return ctx.parsed.y.toFixed(1) + '%'; }} }} }}
+      }},
       scales: {{
-        x: {{ticks: {{font: {{size: 12}}}}}},
-        y: {{max: 100, ticks: {{font: {{size: 10}}, callback: v => v + '%'}},
-             grid: {{color: 'rgba(0,0,0,0.05)'}}}}
+        x: {{ ticks: {{ font: {{ size: 12 }} }} }},
+        y: {{ max: 100, ticks: {{ font: {{ size: 10 }}, callback: function(v) {{ return v + '%'; }} }}, grid: {{ color: 'rgba(0,0,0,0.05)' }} }}
       }}
     }}
   }});
