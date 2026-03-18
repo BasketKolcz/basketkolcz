@@ -822,6 +822,42 @@ def base(content, scripts="", active="home"):
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+function initSortable(tableId, skipCol) {{
+  var tbl = document.getElementById(tableId);
+  if (!tbl) return;
+  var state = {{col: -1, asc: true}};
+  var ths = tbl.querySelectorAll('thead th');
+  ths.forEach(function(th, ci) {{
+    if (ci === skipCol) return;
+    th.style.cursor = 'pointer';
+    th.style.userSelect = 'none';
+    th.style.whiteSpace = 'nowrap';
+    th.addEventListener('click', function() {{
+      var asc = (state.col === ci) ? !state.asc : false;
+      state = {{col: ci, asc: asc}};
+      ths.forEach(function(h, i) {{
+        var base = h.getAttribute('data-label') || h.textContent.replace(/[\u25b2\u25bc]/g,'').trim();
+        h.setAttribute('data-label', base);
+        h.textContent = base + (i === ci ? (asc ? ' \u25b2' : ' \u25bc') : '');
+      }});
+      var tbody = tbl.querySelector('tbody');
+      var rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort(function(a, b) {{
+        var ca = a.cells[ci] ? a.cells[ci].textContent.trim() : '';
+        var cb = b.cells[ci] ? b.cells[ci].textContent.trim() : '';
+        var na = parseFloat(ca.replace('%','').replace('\u2014','').replace(',','.'));
+        var nb = parseFloat(cb.replace('%','').replace('\u2014','').replace(',','.'));
+        if (!isNaN(na) && !isNaN(nb)) return asc ? na-nb : nb-na;
+        var fa = ca.match(/^(\d+)\/(\d+)$/), fb = cb.match(/^(\d+)\/(\d+)$/);
+        if (fa && fb) {{ var va=parseInt(fa[1])/parseInt(fa[2]), vb=parseInt(fb[1])/parseInt(fb[2]); return asc ? va-vb : vb-va; }}
+        return asc ? ca.localeCompare(cb) : cb.localeCompare(ca);
+      }});
+      rows.forEach(function(r) {{ tbody.appendChild(r); }});
+    }});
+  }});
+}}
+</script>
 {scripts}
 </body></html>"""
 
@@ -2048,11 +2084,11 @@ def mecz(match_id):
           <span id="lineup-legend" style="font-size:.72rem;color:#aaa">{legend_off}</span>
         </div>
         <div id="lineup-off">
-          <div class="table-responsive"><table class="table table-hover mb-0">
+          <div class="table-responsive"><table id="tbl-lu-off" class="table table-hover mb-0">
           {table_hdr}<tbody>{rows_off or no_data_off}</tbody></table></div>
         </div>
         <div id="lineup-def" style="display:none">
-          <div class="table-responsive"><table class="table table-hover mb-0">
+          <div class="table-responsive"><table id="tbl-lu-def" class="table table-hover mb-0">
           {table_hdr}<tbody>{rows_def or no_data_def}</tbody></table></div>
         </div>
         <script>
@@ -2066,6 +2102,10 @@ def mecz(match_id):
           document.getElementById('lineup-legend').innerHTML = mode==='off'
             ? '{legend_off}' : '{legend_def}';
         }}
+        document.addEventListener('DOMContentLoaded', function() {{
+          initSortable('tbl-lu-off', 0);
+          initSortable('tbl-lu-def', 0);
+        }});
         </script>"""
 
     # Shot timing
@@ -2538,6 +2578,65 @@ def sezon():
         GROUP BY ts.druzyna, ts.bucket
     """, (sezon_filter,))
     timing_rows = cur.fetchall()
+
+    # Piatki sezonu - agregacja po roster_id (synchronizacja po nazwiskach)
+    season_lineups_off = []
+    season_lineups_def = []
+    try:
+        cur.execute("""
+            SELECT pa.nr, pa.roster_id, r.imie, r.nazwisko
+            FROM player_aliases pa
+            JOIN roster r ON pa.roster_id = r.id
+            WHERE pa.sezon = %s
+        """, (sezon_filter,))
+        alias_rows = cur.fetchall()
+        nr_to_rid = {str(row["nr"]): row["roster_id"] for row in alias_rows}
+        rid_to_name = {row["roster_id"]: f"{row['nazwisko']} {row['imie'][0]}." for row in alias_rows}
+
+        def normalize_lineup(lineup_str):
+            nrs = lineup_str.split("-")
+            ids = []
+            for nr in nrs:
+                rid = nr_to_rid.get(nr)
+                ids.append(("r", rid) if rid else ("n", nr))
+            return tuple(sorted(ids))
+
+        def lineup_label(lineup_str):
+            nrs = lineup_str.split("-")
+            parts = []
+            for nr in nrs:
+                rid = nr_to_rid.get(nr)
+                parts.append(rid_to_name[rid] if rid else f"#{nr}")
+            return " · ".join(parts)
+
+        for druzyna_filter, target_list in [("gtk", season_lineups_off), ("gtk_def", season_lineups_def)]:
+            cur.execute("""
+                SELECT ls.lineup,
+                       SUM(ls.pts)  as pts,  SUM(ls.poss) as poss,
+                       SUM(ls.p2m)  as p2m,  SUM(ls.p2a)  as p2a,
+                       SUM(ls.p3m)  as p3m,  SUM(ls.p3a)  as p3a,
+                       SUM(ls.ftm)  as ftm,  SUM(ls.fta)  as fta,
+                       SUM(ls.br)   as br,   SUM(ls.fd)   as fd
+                FROM lineup_stats ls
+                JOIN matches m ON ls.match_id = m.id
+                WHERE m.sezon = %s AND ls.druzyna = %s
+                GROUP BY ls.lineup
+            """, (sezon_filter, druzyna_filter))
+            raw_rows = cur.fetchall()
+
+            agg = {}
+            for row in raw_rows:
+                key = normalize_lineup(row["lineup"])
+                label = lineup_label(row["lineup"])
+                if key not in agg:
+                    agg[key] = {"label": label, "pts":0,"poss":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"br":0,"fd":0}
+                for f in ["pts","poss","p2m","p2a","p3m","p3a","ftm","fta","br","fd"]:
+                    agg[key][f] += int(row[f] or 0)
+
+            target_list.extend(sorted(agg.values(), key=lambda x: x["poss"], reverse=True))
+    except Exception:
+        pass
+
     cur.close()
 
     gtk_name = get_setting("gtk_name") or "GTK"
@@ -2609,6 +2708,38 @@ def sezon():
 
     tim_rows = "".join(timing_row(b) for b in BUCKETS)
 
+    def season_lineup_rows(lineups, mode="off"):
+        if not lineups:
+            return ""
+        rows = ""
+        for i, lu in enumerate(lineups):
+            fga  = lu["p2a"] + lu["p3a"]
+            pts  = lu["pts"]; poss = lu["poss"]
+            p2m  = lu["p2m"]; p2a  = lu["p2a"]
+            p3m  = lu["p3m"]; p3a  = lu["p3a"]
+            ftm  = lu["ftm"]; fta  = lu["fta"]
+            br   = lu["br"]
+            efg  = f"{(p2m+1.5*p3m)/fga:.0%}" if fga else "—"
+            ppp  = f"{pts/poss:.2f}" if poss else "—"
+            ppp_avg = f"{pts/poss:.2f}" if poss else "—"
+            if mode == "def":
+                ppp_color = "#1a6b3c" if poss and pts/poss<0.70 else ("#8b1a1a" if poss and pts/poss>=0.90 else "#444")
+            else:
+                ppp_color = "#1a6b3c" if poss and pts/poss>=0.9 else ("#8b1a1a" if poss and pts/poss<0.7 else "#444")
+            bg = "#f8f9ff" if i%2==0 else "#fff"
+            rows += f"""<tr style="background:{bg}">
+                <td style="font-size:.78rem">{lu["label"]}</td>
+                <td class="text-center">{poss}</td>
+                <td class="text-center fw-bold" style="color:#1a2b4a">{pts}</td>
+                <td class="text-center fw-bold" style="color:{ppp_color}">{ppp}</td>
+                <td class="text-center">{efg}</td>
+                <td class="text-center">{p2m}/{p2a}</td>
+                <td class="text-center">{p3m}/{p3a}</td>
+                <td class="text-center">{ftm}/{fta}</td>
+                <td class="text-center">{br}</td>
+            </tr>"""
+        return rows
+
     pts_per_match_gtk = [0,0,0,0]
     pts_per_match_opp = [0,0,0,0]
     season_opts = "".join([f'<option value="{s}" {"selected" if s==sezon_filter else ""}>{s}</option>' for s in sezony])
@@ -2633,6 +2764,7 @@ def sezon():
 
 <ul class="nav nav-tabs mb-2">
   <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#sMetrics">Metryki średnie</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sPiatki">Piątki</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sTiming">Timing rzutów</button></li>
 </ul>
 
@@ -2661,6 +2793,42 @@ def sezon():
       </div></div>
     </div>
   </div>
+</div>
+
+<div class="tab-pane fade" id="sPiatki">
+  <div class="card mt-1"><div class="card-body p-2">
+    <div class="section-hdr">Piątki sezonu — agregacja po zawodnikach</div>
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <div class="btn-group btn-group-sm" role="group">
+        <button type="button" class="btn btn-primary active btn-sm" id="btn-s-off" onclick="showSezonLineup('off')">⚔ OFF</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-s-def" onclick="showSezonLineup('def')">🛡 DEF</button>
+      </div>
+      <span id="s-lineup-legend" style="font-size:.72rem;color:#aaa">PPP: <span style="color:#1a6b3c">≥0.90 dobry</span> / <span style="color:#8b1a1a">&lt;0.70 słaby</span></span>
+    </div>
+    <div id="s-lineup-off">
+      {'<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych piątek OFF w tym sezonie.</p>' if not season_lineups_off else
+      '<div class="table-responsive"><table id="tbl-s-off" class="table table-hover mb-0"><thead><tr><th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th><th class="text-center">PPP</th><th class="text-center">eFG%</th><th class="text-center">2PM/A</th><th class="text-center">3PM/A</th><th class="text-center">FTM/A</th><th class="text-center">BR</th></tr></thead><tbody>' + season_lineup_rows(season_lineups_off, "off") + '</tbody></table></div>'}
+    </div>
+    <div id="s-lineup-def" style="display:none">
+      {'<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych piątek DEF — wgraj mecze ponownie po aktualizacji.</p>' if not season_lineups_def else
+      '<div class="table-responsive"><table id="tbl-s-def" class="table table-hover mb-0"><thead><tr><th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th><th class="text-center">PPP</th><th class="text-center">eFG%</th><th class="text-center">2PM/A</th><th class="text-center">3PM/A</th><th class="text-center">FTM/A</th><th class="text-center">BR</th></tr></thead><tbody>' + season_lineup_rows(season_lineups_def, "def") + '</tbody></table></div>'}
+    </div>
+    <script>
+    function showSezonLineup(mode) {{
+      document.getElementById('s-lineup-off').style.display = mode==='off' ? '' : 'none';
+      document.getElementById('s-lineup-def').style.display = mode==='def' ? '' : 'none';
+      document.getElementById('btn-s-off').className = mode==='off' ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
+      document.getElementById('btn-s-def').className = mode==='def' ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
+      document.getElementById('s-lineup-legend').innerHTML = mode==='off'
+        ? 'PPP: <span style="color:#1a6b3c">≥0.90 dobry</span> / <span style="color:#8b1a1a">&lt;0.70 słaby</span>'
+        : 'PPP rywala: <span style="color:#1a6b3c">&lt;0.70 dobry</span> / <span style="color:#8b1a1a">≥0.90 słaby</span>';
+    }}
+    document.addEventListener('DOMContentLoaded', function() {{
+      initSortable('tbl-s-off', 0);
+      initSortable('tbl-s-def', 0);
+    }});
+    </script>
+  </div></div>
 </div>
 
 <div class="tab-pane fade" id="sTiming">
