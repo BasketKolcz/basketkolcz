@@ -2239,11 +2239,19 @@ def mecz(match_id):
                 ppp_color = "#1a6b3c" if poss and pts/poss>=0.9 else ("#8b1a1a" if poss and pts/poss<0.7 else "#444")
             bg = "#f8f9ff" if i%2==0 else "#fff"
             skladniki = " · ".join(nr_name_map.get(n, f"#{n}") for n in lu["lineup"].split("-"))
+            net_val = lu.get("net_rtg", None)
+            if net_val is not None:
+                net_str = f"{net_val:+.1f}"
+                net_color = "#1a6b3c" if net_val > 0 else ("#8b1a1a" if net_val < 0 else "#888")
+                net_cell = f'<td class="text-center fw-bold" style="color:{net_color}">{net_str}</td>'
+            else:
+                net_cell = '<td class="text-center" style="color:#aaa">—</td>'
             rows += f"""<tr style="background:{bg}">
                 <td style="font-size:.78rem">{skladniki}</td>
                 <td class="text-center">{poss}</td>
                 <td class="text-center fw-bold" style="color:#1a2b4a">{pts}</td>
                 <td class="text-center fw-bold" style="color:{ppp_color}">{ppp}</td>
+                {net_cell}
                 <td class="text-center">{efg}</td>
                 <td class="text-center">{p2m}/{p2a}</td>
                 <td class="text-center">{p3m}/{p3a}</td>
@@ -2251,6 +2259,43 @@ def mecz(match_id):
                 <td class="text-center">{br}</td>
             </tr>"""
         return rows
+
+    # Oblicz NetRtg per piątka: ORtg_off - DRtg_def
+    off_map = {}
+    for lu in all_lineups:
+        k = lu["lineup"]
+        poss = int(lu.get("poss",0) or 0)
+        pts  = int(lu.get("pts",0) or 0)
+        if poss > 0: off_map[k] = pts * 100 / poss
+    def_map = {}
+    for lu in all_lineups_def:
+        k = lu["lineup"]
+        poss = int(lu.get("poss",0) or 0)
+        pts  = int(lu.get("pts",0) or 0)
+        if poss > 0: def_map[k] = pts * 100 / poss
+    # Wstrzyknij net_rtg do każdej piątki OFF
+    for lu in all_lineups:
+        k = lu["lineup"]
+        if k in off_map and k in def_map:
+            lu["net_rtg"] = round(off_map[k] - def_map[k], 1)
+        else:
+            lu["net_rtg"] = None
+
+    # Zbuduj listę NET (piątki z obu stron) posortowaną po NetRtg
+    net_keys = set(off_map.keys()) | set(def_map.keys())
+    all_lineups_net = []
+    seen_net = {}
+    for lu in all_lineups + all_lineups_def:
+        k = lu["lineup"]
+        if k not in seen_net:
+            seen_net[k] = dict(lu)
+            seen_net[k]["ortg"] = off_map.get(k)
+            seen_net[k]["drtg"] = def_map.get(k)
+            net = (off_map[k] - def_map[k]) if (k in off_map and k in def_map) else None
+            seen_net[k]["net_rtg"] = round(net, 1) if net is not None else None
+    all_lineups_net = sorted(seen_net.values(),
+        key=lambda x: (x["net_rtg"] is not None, x["net_rtg"] if x["net_rtg"] is not None else 0),
+        reverse=True)
 
     def lineup_table():
         if not all_lineups and not all_lineups_def:
@@ -2264,13 +2309,39 @@ def mecz(match_id):
 
         table_hdr = """<thead><tr>
           <th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th>
-          <th class="text-center">PPP</th><th class="text-center">eFG%</th>
+          <th class="text-center">PPP</th><th class="text-center">NetRtg</th><th class="text-center">eFG%</th>
           <th class="text-center">2PM/A</th><th class="text-center">3PM/A</th>
           <th class="text-center">FTM/A</th><th class="text-center">BR</th>
         </tr></thead>"""
+        table_hdr_net = """<thead><tr>
+          <th>Skład</th><th class="text-center">POSS</th><th class="text-center">ORtg</th>
+          <th class="text-center">DRtg</th><th class="text-center">NetRtg</th>
+        </tr></thead>"""
 
-        no_data_off = '<tr><td colspan="9" class="text-muted text-center p-3" style="font-size:.82rem">Brak danych OFF — wgraj mecz ponownie.</td></tr>'
-        no_data_def = '<tr><td colspan="9" class="text-muted text-center p-3" style="font-size:.82rem">Brak danych DEF — wgraj mecz ponownie.</td></tr>'
+        no_data_off = '<tr><td colspan="10" class="text-muted text-center p-3" style="font-size:.82rem">Brak danych OFF — wgraj mecz ponownie.</td></tr>'
+        no_data_def = '<tr><td colspan="10" class="text-muted text-center p-3" style="font-size:.82rem">Brak danych DEF — wgraj mecz ponownie.</td></tr>'
+        no_data_net = '<tr><td colspan="5" class="text-muted text-center p-3" style="font-size:.82rem">Brak danych — wgraj mecz ponownie.</td></tr>'
+
+        # Wiersze NET
+        rows_net = ""
+        for i, lu in enumerate(all_lineups_net):
+            ortg = lu.get("ortg")
+            drtg = lu.get("drtg")
+            net  = lu.get("net_rtg")
+            poss = int(lu.get("poss",0) or 0)
+            ortg_str = f"{ortg:.1f}" if ortg is not None else "—"
+            drtg_str = f"{drtg:.1f}" if drtg is not None else "—"
+            net_str  = f"{net:+.1f}" if net is not None else "—"
+            net_color = ("#1a6b3c" if net and net>0 else "#8b1a1a" if net and net<0 else "#888") if net is not None else "#888"
+            bg = "#f8f9ff" if i%2==0 else "#fff"
+            skladniki = " · ".join(nr_name_map.get(n, f"#{n}") for n in lu["lineup"].split("-"))
+            rows_net += f"""<tr style="background:{bg}">
+                <td style="font-size:.78rem">{skladniki}</td>
+                <td class="text-center">{poss}</td>
+                <td class="text-center" style="color:#1a6b3c">{ortg_str}</td>
+                <td class="text-center" style="color:#8b1a1a">{drtg_str}</td>
+                <td class="text-center fw-bold" style="color:{net_color}">{net_str}</td>
+            </tr>"""
 
         return f"""
         <div class="d-flex align-items-center gap-2 mb-2">
@@ -2279,6 +2350,8 @@ def mecz(match_id):
               onclick="showLineup('off')">⚔ OFF</button>
             <button type="button" class="btn btn-outline-secondary" id="btn-lineup-def"
               onclick="showLineup('def')">🛡 DEF</button>
+            <button type="button" class="btn btn-outline-secondary" id="btn-lineup-net"
+              onclick="showLineup('net')">⚡ NET</button>
           </div>
           <span id="lineup-legend" style="font-size:.72rem;color:#aaa">{legend_off}</span>
         </div>
@@ -2290,20 +2363,32 @@ def mecz(match_id):
           <div class="table-responsive"><table id="tbl-lu-def" class="table table-hover mb-0">
           {table_hdr}<tbody>{rows_def or no_data_def}</tbody></table></div>
         </div>
+        <div id="lineup-net" style="display:none">
+          <div class="table-responsive"><table id="tbl-lu-net" class="table table-hover mb-0">
+          {table_hdr_net}<tbody>{rows_net or no_data_net}</tbody></table></div>
+        </div>
         <script>
         function showLineup(mode) {{
-          document.getElementById('lineup-off').style.display = mode==='off' ? '' : 'none';
-          document.getElementById('lineup-def').style.display = mode==='def' ? '' : 'none';
+          ['off','def','net'].forEach(m => {{
+            document.getElementById('lineup-'+m).style.display = m===mode ? '' : 'none';
+          }});
           document.getElementById('btn-lineup-off').className = mode==='off'
             ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
           document.getElementById('btn-lineup-def').className = mode==='def'
             ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
-          document.getElementById('lineup-legend').innerHTML = mode==='off'
-            ? '{legend_off}' : '{legend_def}';
+          document.getElementById('btn-lineup-net').className = mode==='net'
+            ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
+          var legends = {{
+            'off': '{legend_off}',
+            'def': '{legend_def}',
+            'net': 'NetRtg = ORtg - DRtg &middot; posortowane malejąco'
+          }};
+          document.getElementById('lineup-legend').innerHTML = legends[mode];
         }}
         document.addEventListener('DOMContentLoaded', function() {{
           initSortable('tbl-lu-off', 0);
           initSortable('tbl-lu-def', 0);
+          initSortable('tbl-lu-net', 0);
         }});
         </script>"""
 
@@ -2705,6 +2790,7 @@ def mecz(match_id):
   <div class="d-flex gap-2">
     <a href="/historia" class="btn btn-outline-secondary btn-sm">← Historia</a>
     <a href="/mecz/{match_id}/edytuj" class="btn btn-outline-primary btn-sm">✏️ Przypisz zawodników</a>
+    <a href="/mecz/{match_id}/raport-trenerski" target="_blank" class="btn btn-outline-dark btn-sm fw-bold">🖨 Raport</a>
     <a href="/mecz/{match_id}/export/xlsx" class="btn btn-warning btn-sm fw-bold">⬇ Excel</a>
     <a href="/mecz/{match_id}/export/pdf" class="btn btn-danger btn-sm fw-bold">⬇ PDF</a>
   </div>
@@ -3094,6 +3180,268 @@ def mecz_delete(match_id):
     return redirect(url_for("historia"))
 
 # ══════════════════════════════════════════════════════════════════════════════
+# RAPORT TRENERSKI
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/mecz/<int:match_id>/raport-trenerski")
+def raport_trenerski(match_id):
+    db = get_db(); cur = db.cursor()
+    cur.execute("SELECT * FROM matches WHERE id=%s", (match_id,))
+    m = cur.fetchone()
+    if not m: return "Mecz nie istnieje", 404
+
+    gtk_name = (m.get("nazwa_gtk","") or "").strip() or get_setting("gtk_name") or "GTK"
+    name_opp = m["przeciwnik"]
+    dt = m["data_meczu"].strftime("%d.%m.%Y") if m["data_meczu"] else ""
+
+    cur.execute("SELECT * FROM match_stats WHERE match_id=%s ORDER BY kwarta", (match_id,))
+    all_stats = list(cur.fetchall())
+    cur.execute("SELECT * FROM player_stats WHERE match_id=%s AND druzyna='gtk'", (match_id,))
+    all_players = list(cur.fetchall())
+
+    # Mapa nr → nazwisko
+    try:
+        cur.execute("""SELECT ps.nr, r.imie, r.nazwisko
+                       FROM player_stats ps JOIN roster r ON ps.roster_id=r.id
+                       WHERE ps.match_id=%s AND ps.druzyna='gtk'""", (match_id,))
+        nr_name_map = {str(r["nr"]): f"{r['nazwisko']} {r['imie'][0]}." for r in cur.fetchall()}
+    except: nr_name_map = {}
+
+    # Piątki OFF + DEF → NET
+    try:
+        cur.execute("SELECT * FROM lineup_stats WHERE match_id=%s AND druzyna='gtk' ORDER BY poss DESC", (match_id,))
+        lu_off = list(cur.fetchall())
+        cur.execute("SELECT * FROM lineup_stats WHERE match_id=%s AND druzyna='gtk_def' ORDER BY poss DESC", (match_id,))
+        lu_def = list(cur.fetchall())
+    except: lu_off = lu_def = []
+
+    off_rtg = {lu["lineup"]: lu["pts"]*100/lu["poss"] for lu in lu_off if lu.get("poss",0)>0}
+    def_rtg = {lu["lineup"]: lu["pts"]*100/lu["poss"] for lu in lu_def if lu.get("poss",0)>0}
+    net_lineups = []
+    seen = {}
+    for lu in lu_off:
+        k = lu["lineup"]
+        if k not in seen:
+            seen[k] = True
+            net = round(off_rtg[k] - def_rtg[k], 1) if k in off_rtg and k in def_rtg else None
+            net_lineups.append({"lineup": k, "poss": lu["poss"], "ortg": off_rtg.get(k), "drtg": def_rtg.get(k), "net": net})
+    net_lineups.sort(key=lambda x: (x["net"] is not None, x["net"] if x["net"] else 0), reverse=True)
+
+    cur.close()
+
+    def build_suma(druzyna):
+        s = {"pts":0,"poss":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"br":0,"fd":0}
+        for row in all_stats:
+            if row["druzyna"] == druzyna:
+                for k in s: s[k] += row.get(k,0) or 0
+        return s
+
+    sg = build_suma("gtk"); so = build_suma("opp")
+    kg = calc_kpi(sg); ko = calc_kpi(so)
+    net_rtg_total = f"{float(kg['ortg']) - float(ko['ortg']):.1f}" if kg["ortg"]!="-" and ko["ortg"]!="-" else "—"
+
+    def pct_bar(val_g, val_o, higher_is_better=True):
+        try:
+            vg = float(str(val_g).replace('%',''))
+            vo = float(str(val_o).replace('%',''))
+            g_win = (vg > vo) if higher_is_better else (vg < vo)
+            o_win = (vo > vg) if higher_is_better else (vo < vg)
+            gc = "#1a6b3c" if g_win else ("#8b1a1a" if o_win else "#555")
+            oc = "#8b1a1a" if g_win else ("#1a6b3c" if o_win else "#555")
+            return f'<td style="color:{gc};font-weight:{"700" if g_win else "400"}">{val_g}</td><td style="color:{oc};font-weight:{"700" if o_win else "400"}">{val_o}</td>'
+        except: return f'<td>{val_g}</td><td>{val_o}</td>'
+
+    # Tabela per kwarta
+    q_rows = ""
+    for qn in [1,2,3,4]:
+        qg = next((r for r in all_stats if r["druzyna"]=="gtk" and r["kwarta"]==qn), {})
+        qo = next((r for r in all_stats if r["druzyna"]=="opp" and r["kwarta"]==qn), {})
+        fg = qg.get("pts",0) or 0; fo = qo.get("pts",0) or 0
+        win_g = fg > fo; win_o = fo > fg
+        qcolors = {1:"#c8e6c9",2:"#bbdefb",3:"#fff9c4",4:"#fce4ec"}
+        q_rows += f"""<tr>
+          <td style="background:{qcolors[qn]};font-weight:600;font-size:11px;padding:4px 8px">{qn}Q</td>
+          <td style="color:{'#1a6b3c' if win_g else '#333'};font-weight:{'700' if win_g else '400'};text-align:center">{fg}</td>
+          <td style="color:{'#8b1a1a' if win_o else '#333'};font-weight:{'700' if win_o else '400'};text-align:center">{fo}</td>
+          <td style="text-align:center;font-size:11px">{qg.get('p2m',0)}/{qg.get('p2a',0)}</td>
+          <td style="text-align:center;font-size:11px">{qg.get('p3m',0)}/{qg.get('p3a',0)}</td>
+          <td style="text-align:center;font-size:11px">{qg.get('ftm',0)}/{qg.get('fta',0)}</td>
+          <td style="text-align:center;font-size:11px">{qg.get('br',0)}</td>
+          <td style="text-align:center;font-size:11px">{qg.get('poss',0)}</td>
+        </tr>"""
+
+    # Top 5 zawodników po punktach
+    top_players = sorted(all_players, key=lambda x: x.get("pts",0) or 0, reverse=True)[:6]
+    p_rows = ""
+    for pd in top_players:
+        name = nr_name_map.get(str(pd["nr"]), f"#{pd['nr']}")
+        fga = (pd.get("p2a",0) or 0) + (pd.get("p3a",0) or 0)
+        fta = pd.get("fta",0) or 0
+        pts = pd.get("pts",0) or 0
+        efg = f"{((pd.get('p2m',0) or 0)+1.5*(pd.get('p3m',0) or 0))/fga:.0%}" if fga else "—"
+        usg = f"{(fga+0.44*fta+(pd.get('br',0) or 0))/(sg['poss']):.0%}" if sg['poss'] else "—"
+        p_rows += f"""<tr>
+          <td style="font-size:11px;font-weight:600">{name}</td>
+          <td style="text-align:center;font-weight:700;color:#1a2b4a">{pts}</td>
+          <td style="text-align:center;font-size:11px">{pd.get('p2m',0)}/{pd.get('p2a',0)}</td>
+          <td style="text-align:center;font-size:11px">{pd.get('p3m',0)}/{pd.get('p3a',0)}</td>
+          <td style="text-align:center;font-size:11px">{pd.get('ftm',0)}/{fta}</td>
+          <td style="text-align:center">{efg}</td>
+          <td style="text-align:center">{usg}</td>
+          <td style="text-align:center;font-size:11px">{pd.get('ast',0)}</td>
+          <td style="text-align:center;font-size:11px">{pd.get('br',0)}</td>
+        </tr>"""
+
+    # Top piątki NET
+    net_rows = ""
+    for lu in net_lineups[:5]:
+        k = lu["lineup"]
+        skl = " · ".join(nr_name_map.get(n, f"#{n}") for n in k.split("-"))
+        net_val = lu["net"]
+        net_str = f"{net_val:+.1f}" if net_val is not None else "—"
+        net_col = "#1a6b3c" if net_val and net_val>0 else ("#8b1a1a" if net_val and net_val<0 else "#888")
+        ortg_str = f"{lu['ortg']:.1f}" if lu.get("ortg") else "—"
+        drtg_str = f"{lu['drtg']:.1f}" if lu.get("drtg") else "—"
+        net_rows += f"""<tr>
+          <td style="font-size:10px">{skl}</td>
+          <td style="text-align:center;font-size:11px">{lu['poss']}</td>
+          <td style="text-align:center;font-size:11px;color:#1a6b3c">{ortg_str}</td>
+          <td style="text-align:center;font-size:11px;color:#8b1a1a">{drtg_str}</td>
+          <td style="text-align:center;font-weight:700;color:{net_col}">{net_str}</td>
+        </tr>"""
+
+    wynik_g = m["wynik_gtk"]; wynik_o = m["wynik_opp"]
+    wygrana = wynik_g > wynik_o
+
+    html = f"""<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>Raport trenerski — {gtk_name} vs {name_opp}</title>
+<style>
+  @page {{ size: A4 landscape; margin: 12mm; }}
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: Arial, sans-serif; font-size: 12px; color: #222; background: #fff; }}
+  .page {{ width: 100%; }}
+  .header {{ display: flex; justify-content: space-between; align-items: flex-start;
+             border-bottom: 3px solid #1a2b4a; padding-bottom: 8px; margin-bottom: 10px; }}
+  .header-left h1 {{ font-size: 20px; font-weight: 700; color: #1a2b4a; }}
+  .header-left p {{ font-size: 11px; color: #666; margin-top: 2px; }}
+  .score-box {{ background: #1a2b4a; color: #fff; border-radius: 8px; padding: 8px 20px; text-align: center; }}
+  .score-box .score {{ font-size: 28px; font-weight: 700; }}
+  .score-box .result {{ font-size: 11px; margin-top: 2px;
+                        color: {'#7fff7f' if wygrana else '#ff9999'}; font-weight: 600; }}
+  .grid-3 {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }}
+  .grid-2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
+  .card {{ border: 1px solid #ddd; border-radius: 6px; padding: 8px; }}
+  .card-title {{ font-size: 10px; font-weight: 700; color: #666; text-transform: uppercase;
+                 letter-spacing: .04em; margin-bottom: 6px; border-bottom: 1px solid #eee; padding-bottom: 4px; }}
+  .kpi-grid {{ display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; }}
+  .kpi {{ background: #f4f6fb; border-radius: 4px; padding: 5px 6px; text-align: center; }}
+  .kpi-val {{ font-size: 16px; font-weight: 700; color: #1a2b4a; }}
+  .kpi-lbl {{ font-size: 9px; color: #888; text-transform: uppercase; }}
+  .kpi-net {{ background: #e8f5e9; }}
+  .kpi-net .kpi-val {{ color: #1a6b3c; }}
+  table {{ width: 100%; border-collapse: collapse; }}
+  th {{ background: #1a2b4a; color: #fff; font-size: 10px; padding: 4px 6px; text-align: center; font-weight: 600; }}
+  th:first-child {{ text-align: left; }}
+  td {{ padding: 4px 6px; border-bottom: .5px solid #eee; font-size: 11px; }}
+  tr:last-child td {{ border-bottom: none; }}
+  tr:nth-child(even) {{ background: #f8f9ff; }}
+  .footer {{ margin-top: 10px; border-top: 1px solid #ddd; padding-top: 6px;
+             display: flex; justify-content: space-between; font-size: 9px; color: #aaa; }}
+  @media print {{ body {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }} }}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- NAGŁÓWEK -->
+<div class="header">
+  <div class="header-left">
+    <h1>{gtk_name} vs {name_opp}</h1>
+    <p>{dt} &nbsp;·&nbsp; {m.get('rozgrywki','')} &nbsp;·&nbsp; Runda {m.get('runda','')} &nbsp;·&nbsp; {m.get('miejsce','').capitalize()}</p>
+    <p style="margin-top:6px;font-size:10px;color:#aaa">Raport trenerski · Basket Kołcz Analytics</p>
+  </div>
+  <div class="score-box">
+    <div class="score">{wynik_g} : {wynik_o}</div>
+    <div class="result">{'WYGRANA' if wygrana else 'PORAŻKA'}</div>
+  </div>
+</div>
+
+<!-- KPI + KWARTY + ZAWODNICY -->
+<div class="grid-3" style="margin-bottom:10px">
+
+  <!-- KPI -->
+  <div class="card">
+    <div class="card-title">Kluczowe metryki</div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">{kg['efg']}</div><div class="kpi-lbl">eFG%</div></div>
+      <div class="kpi"><div class="kpi-val">{kg['ts']}</div><div class="kpi-lbl">TS%</div></div>
+      <div class="kpi"><div class="kpi-val">{kg['ortg']}</div><div class="kpi-lbl">ORtg</div></div>
+      <div class="kpi"><div class="kpi-val">{ko['ortg']}</div><div class="kpi-lbl">DRtg</div></div>
+      <div class="kpi"><div class="kpi-val">{kg['ppp']}</div><div class="kpi-lbl">PPP</div></div>
+      <div class="kpi kpi-net"><div class="kpi-val">{net_rtg_total}</div><div class="kpi-lbl">NetRtg</div></div>
+      <div class="kpi"><div class="kpi-val">{sg.get('poss',0)}</div><div class="kpi-lbl">POSS</div></div>
+      <div class="kpi"><div class="kpi-val">{sg.get('br',0)}</div><div class="kpi-lbl">Straty</div></div>
+      <div class="kpi"><div class="kpi-val">{kg['ft_pct']}</div><div class="kpi-lbl">FT%</div></div>
+    </div>
+    <table style="margin-top:8px">
+      <thead><tr><th>Metryka</th><th>{gtk_name}</th><th>{name_opp}</th></tr></thead>
+      <tbody>
+        <tr><td>eFG%</td>{pct_bar(kg['efg'], ko['efg'])}</tr>
+        <tr><td>ORtg</td>{pct_bar(kg['ortg'], ko['ortg'])}</tr>
+        <tr><td>2PT%</td>{pct_bar(kg['p2_pct'], ko['p2_pct'])}</tr>
+        <tr><td>3PT%</td>{pct_bar(kg['p3_pct'], ko['p3_pct'])}</tr>
+        <tr><td>FT%</td>{pct_bar(kg['ft_pct'], ko['ft_pct'])}</tr>
+        <tr><td>Straty/POSS</td>{pct_bar(kg['topct'], ko['topct'], False)}</tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- PER KWARTA -->
+  <div class="card">
+    <div class="card-title">{gtk_name} — per kwarta</div>
+    <table>
+      <thead><tr><th>Q</th><th>GTK</th><th>OPP</th><th>2PM/A</th><th>3PM/A</th><th>FTM/A</th><th>BR</th><th>POSS</th></tr></thead>
+      <tbody>{q_rows}</tbody>
+    </table>
+  </div>
+
+  <!-- ZAWODNICY -->
+  <div class="card">
+    <div class="card-title">Top zawodnicy</div>
+    <table>
+      <thead><tr><th>Zawodnik</th><th>PTS</th><th>2PM/A</th><th>3PM/A</th><th>FTM/A</th><th>eFG%</th><th>USG%</th><th>AST</th><th>BR</th></tr></thead>
+      <tbody>{p_rows}</tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- PIĄTKI NET -->
+<div class="card">
+  <div class="card-title">Piątki — Net Rating (ORtg OFF − DRtg DEF) · top 5</div>
+  {'<p style="font-size:10px;color:#aaa;padding:4px 0">Brak danych NET — wgraj mecz ponownie.</p>' if not net_lineups else f"""
+  <table>
+    <thead><tr><th>Skład</th><th>POSS</th><th>ORtg</th><th>DRtg</th><th>NetRtg</th></tr></thead>
+    <tbody>{net_rows}</tbody>
+  </table>"""}
+</div>
+
+<div class="footer">
+  <span>Basket Kołcz Analytics · basketkolcz.onrender.com</span>
+  <span>Aby zapisać jako PDF: Ctrl+P → Zapisz jako PDF · Orientacja: pozioma · Marginesy: minimalne</span>
+  <span>Wygenerowano: {dt}</span>
+</div>
+
+</div>
+</body>
+</html>"""
+
+    return html
+
+# ══════════════════════════════════════════════════════════════════════════════
 # STATYSTYKI SEZONU
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -3165,6 +3513,7 @@ def sezon():
     # Piatki sezonu - agregacja po roster_id (synchronizacja po nazwiskach)
     season_lineups_off = []
     season_lineups_def = []
+    season_lineups_net = []
     try:
         cur.execute("""
             SELECT pa.nr, pa.roster_id, r.imie, r.nazwisko
@@ -3217,6 +3566,38 @@ def sezon():
                     agg[key][f] += int(row[f] or 0)
 
             target_list.extend(sorted(agg.values(), key=lambda x: x["poss"], reverse=True))
+
+        # Oblicz NetRtg per piątka sezonu (OFF - DEF)
+        s_off_map = {tuple(sorted(lu["label"].split(" · "))): lu["pts"]*100/lu["poss"]
+                     for lu in season_lineups_off if lu["poss"] > 0}
+        s_def_map = {tuple(sorted(lu["label"].split(" · "))): lu["pts"]*100/lu["poss"]
+                     for lu in season_lineups_def if lu["poss"] > 0}
+        for lu in season_lineups_off:
+            key = tuple(sorted(lu["label"].split(" · ")))
+            if key in s_off_map and key in s_def_map:
+                lu["net_rtg"] = round(s_off_map[key] - s_def_map[key], 1)
+            else:
+                lu["net_rtg"] = None
+        for lu in season_lineups_def:
+            key = tuple(sorted(lu["label"].split(" · ")))
+            if key in s_off_map and key in s_def_map:
+                lu["net_rtg"] = round(s_off_map[key] - s_def_map[key], 1)
+            else:
+                lu["net_rtg"] = None
+
+        # Zbuduj NET lineups sezonu
+        season_lineups_net = []
+        seen_s_net = {}
+        for lu in season_lineups_off:
+            k = lu["label"]
+            if k not in seen_s_net:
+                seen_s_net[k] = dict(lu)
+                key = tuple(sorted(k.split(" · ")))
+                seen_s_net[k]["ortg"] = s_off_map.get(key)
+                seen_s_net[k]["drtg"] = s_def_map.get(key)
+        season_lineups_net = sorted(seen_s_net.values(),
+            key=lambda x: (x["net_rtg"] is not None, x["net_rtg"] if x["net_rtg"] is not None else 0),
+            reverse=True)
     except Exception:
         pass
 
@@ -3310,11 +3691,19 @@ def sezon():
             else:
                 ppp_color = "#1a6b3c" if poss and pts/poss>=0.9 else ("#8b1a1a" if poss and pts/poss<0.7 else "#444")
             bg = "#f8f9ff" if i%2==0 else "#fff"
+            net_val = lu.get("net_rtg", None)
+            if net_val is not None:
+                net_str = f"{net_val:+.1f}"
+                net_color = "#1a6b3c" if net_val > 0 else ("#8b1a1a" if net_val < 0 else "#888")
+                net_cell = f'<td class="text-center fw-bold" style="color:{net_color}">{net_str}</td>'
+            else:
+                net_cell = '<td class="text-center" style="color:#aaa">—</td>'
             rows += f"""<tr style="background:{bg}">
                 <td style="font-size:.78rem">{lu["label"]}</td>
                 <td class="text-center">{poss}</td>
                 <td class="text-center fw-bold" style="color:#1a2b4a">{pts}</td>
                 <td class="text-center fw-bold" style="color:{ppp_color}">{ppp}</td>
+                {net_cell}
                 <td class="text-center">{efg}</td>
                 <td class="text-center">{p2m}/{p2a}</td>
                 <td class="text-center">{p3m}/{p3a}</td>
@@ -3385,30 +3774,41 @@ def sezon():
       <div class="btn-group btn-group-sm" role="group">
         <button type="button" class="btn btn-primary active btn-sm" id="btn-s-off" onclick="showSezonLineup('off')">⚔ OFF</button>
         <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-s-def" onclick="showSezonLineup('def')">🛡 DEF</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-s-net" onclick="showSezonLineup('net')">⚡ NET</button>
       </div>
       <span id="s-lineup-legend" style="font-size:.72rem;color:#aaa">PPP: <span style="color:#1a6b3c">≥0.90 dobry</span> / <span style="color:#8b1a1a">&lt;0.70 słaby</span></span>
     </div>
     <div id="s-lineup-off">
       {'<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych piątek OFF w tym sezonie.</p>' if not season_lineups_off else
-      '<div class="table-responsive"><table id="tbl-s-off" class="table table-hover mb-0"><thead><tr><th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th><th class="text-center">PPP</th><th class="text-center">eFG%</th><th class="text-center">2PM/A</th><th class="text-center">3PM/A</th><th class="text-center">FTM/A</th><th class="text-center">BR</th></tr></thead><tbody>' + season_lineup_rows(season_lineups_off, "off") + '</tbody></table></div>'}
+      '<div class="table-responsive"><table id="tbl-s-off" class="table table-hover mb-0"><thead><tr><th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th><th class="text-center">PPP</th><th class="text-center">NetRtg</th><th class="text-center">eFG%</th><th class="text-center">2PM/A</th><th class="text-center">3PM/A</th><th class="text-center">FTM/A</th><th class="text-center">BR</th></tr></thead><tbody>' + season_lineup_rows(season_lineups_off, "off") + '</tbody></table></div>'}
     </div>
     <div id="s-lineup-def" style="display:none">
       {'<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych piątek DEF — wgraj mecze ponownie po aktualizacji.</p>' if not season_lineups_def else
-      '<div class="table-responsive"><table id="tbl-s-def" class="table table-hover mb-0"><thead><tr><th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th><th class="text-center">PPP</th><th class="text-center">eFG%</th><th class="text-center">2PM/A</th><th class="text-center">3PM/A</th><th class="text-center">FTM/A</th><th class="text-center">BR</th></tr></thead><tbody>' + season_lineup_rows(season_lineups_def, "def") + '</tbody></table></div>'}
+      '<div class="table-responsive"><table id="tbl-s-def" class="table table-hover mb-0"><thead><tr><th>Skład</th><th class="text-center">POSS</th><th class="text-center">PKT</th><th class="text-center">PPP</th><th class="text-center">NetRtg</th><th class="text-center">eFG%</th><th class="text-center">2PM/A</th><th class="text-center">3PM/A</th><th class="text-center">FTM/A</th><th class="text-center">BR</th></tr></thead><tbody>' + season_lineup_rows(season_lineups_def, "def") + '</tbody></table></div>'}
+    </div>
+    <div id="s-lineup-net" style="display:none">
+      {'<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych NET — potrzebne OFF i DEF.</p>' if not season_lineups_net else
+      '<div class="table-responsive"><table id="tbl-s-net" class="table table-hover mb-0"><thead><tr><th>Skład</th><th class="text-center">POSS</th><th class="text-center">ORtg</th><th class="text-center">DRtg</th><th class="text-center">NetRtg</th></tr></thead><tbody>' + ''.join(f'<tr style="background:{("#f8f9ff" if i%2==0 else "#fff")}"><td style="font-size:.78rem">{lu["label"]}</td><td class="text-center">{lu["poss"]}</td><td class="text-center" style="color:#1a6b3c">{(f'{lu["ortg"]:.1f}' if lu.get("ortg") is not None else "—")}</td><td class="text-center" style="color:#8b1a1a">{(f'{lu["drtg"]:.1f}' if lu.get("drtg") is not None else "—")}</td><td class="text-center fw-bold" style="color:{"#1a6b3c" if lu.get("net_rtg") and lu["net_rtg"]>0 else "#8b1a1a" if lu.get("net_rtg") and lu["net_rtg"]<0 else "#888"}">{(f'{lu["net_rtg"]:+.1f}' if lu.get("net_rtg") is not None else "—")}</td></tr>' for i,lu in enumerate(season_lineups_net)) + '</tbody></table></div>'}
     </div>
     <script>
     function showSezonLineup(mode) {{
-      document.getElementById('s-lineup-off').style.display = mode==='off' ? '' : 'none';
-      document.getElementById('s-lineup-def').style.display = mode==='def' ? '' : 'none';
+      ['off','def','net'].forEach(m => {{
+        var el = document.getElementById('s-lineup-'+m);
+        if(el) el.style.display = m===mode ? '' : 'none';
+      }});
       document.getElementById('btn-s-off').className = mode==='off' ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
       document.getElementById('btn-s-def').className = mode==='def' ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
-      document.getElementById('s-lineup-legend').innerHTML = mode==='off'
-        ? 'PPP: <span style="color:#1a6b3c">≥0.90 dobry</span> / <span style="color:#8b1a1a">&lt;0.70 słaby</span>'
-        : 'PPP rywala: <span style="color:#1a6b3c">&lt;0.70 dobry</span> / <span style="color:#8b1a1a">≥0.90 słaby</span>';
+      var btnNet = document.getElementById('btn-s-net');
+      if(btnNet) btnNet.className = mode==='net' ? 'btn btn-primary active btn-sm' : 'btn btn-outline-secondary btn-sm';
+      var legends = {{'off':'PPP: <span style="color:#1a6b3c">≥0.90 dobry</span> / <span style="color:#8b1a1a">&lt;0.70 słaby</span>',
+                      'def':'PPP rywala: <span style="color:#1a6b3c">&lt;0.70 dobry</span> / <span style="color:#8b1a1a">≥0.90 słaby</span>',
+                      'net':'NetRtg = ORtg &minus; DRtg &middot; posortowane malejąco'}};
+      document.getElementById('s-lineup-legend').innerHTML = legends[mode] || '';
     }}
     document.addEventListener('DOMContentLoaded', function() {{
       initSortable('tbl-s-off', 0);
       initSortable('tbl-s-def', 0);
+      initSortable('tbl-s-net', 0);
     }});
     </script>
   </div></div>
