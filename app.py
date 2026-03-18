@@ -2600,7 +2600,13 @@ def mecz(match_id):
         {clutch_stats()}
         <script>
         (function(){{
-          var ctx = document.getElementById('flowChart').getContext('2d');
+          var initialized = false;
+          function initFlowChart() {{
+            if (initialized) return;
+            var canvas = document.getElementById('flowChart');
+            if (!canvas || canvas.offsetWidth === 0) return;
+            initialized = true;
+            var ctx = canvas.getContext('2d');
           var labels = {labels_js};
           var diffData = {diff_js};
           var gtkData = {gtk_js};
@@ -2679,13 +2685,24 @@ def mecz(match_id):
               }}
             }}
           }});
+          }})(); // koniec initFlowChart
+
+          // Odpal przy kliknięciu zakładki Przebieg
+          var tabBtn = document.querySelector('[data-bs-target="#gtk_flow"]');
+          if (tabBtn) {{
+            tabBtn.addEventListener('shown.bs.tab', function() {{
+              initFlowChart();
+            }});
+          }}
+          // Spróbuj też od razu (jeśli zakładka jest już aktywna)
+          setTimeout(initFlowChart, 100);
         }})();
         </script>"""
 
     # Clutch stats — ostatnie 5 min Q4 przy różnicy ≤5
     def clutch_stats():
         if not flow_rows:
-            return ""
+            return '<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych — wgraj mecz ponownie aby wygenerować statystyki clutch.</p>'
 
         pts_gtk_final = m["wynik_gtk"] or 0
         pts_opp_final = m["wynik_opp"] or 0
@@ -2773,7 +2790,7 @@ def mecz(match_id):
     # Momentum kwart
     def momentum_table():
         if not flow_rows:
-            return ""
+            return '<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych — wgraj mecz ponownie aby wygenerować momentum kwart.</p>'
 
         pts_gtk_final = m["wynik_gtk"] or 0
         pts_opp_final = m["wynik_opp"] or 0
@@ -2969,9 +2986,17 @@ def mecz(match_id):
   <div class="d-flex gap-2">
     <a href="/historia" class="btn btn-outline-secondary btn-sm">← Historia</a>
     <a href="/mecz/{match_id}/edytuj" class="btn btn-outline-primary btn-sm">✏️ Przypisz zawodników</a>
-    <a href="/mecz/{match_id}/raport-trenerski" target="_blank" class="btn btn-outline-dark btn-sm fw-bold">🖨 Raport</a>
-    <a href="/mecz/{match_id}/export/xlsx" class="btn btn-warning btn-sm fw-bold">⬇ Excel</a>
-    <a href="/mecz/{match_id}/export/pdf" class="btn btn-danger btn-sm fw-bold">⬇ PDF</a>
+    <div class="dropdown">
+      <button class="btn btn-warning btn-sm fw-bold dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+        ⬇ Raport
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="/mecz/{match_id}/export/xlsx">📊 Pobierz Excel</a></li>
+        <li><a class="dropdown-item" href="/mecz/{match_id}/export/pdf">📄 Pobierz PDF</a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><a class="dropdown-item" href="/mecz/{match_id}/raport-trenerski" target="_blank">🖨 Raport trenerski</a></li>
+      </ul>
+    </div>
   </div>
 </div>
 
@@ -4322,29 +4347,45 @@ def profil_zawodnika(roster_id):
     avg_t_tot = f"{tsum_tot/tcnt_tot:.1f}s" if tcnt_tot else "—"
 
     # KPI cards
-    def kpi(val, lbl, color="#1a2b4a", subtitle=""):
+    def kpi(val, lbl, color="#1a2b4a", subtitle="", tooltip=""):
         sub_html = f'<div style="font-size:.65rem;color:#bbb;margin-top:1px">{subtitle}</div>' if subtitle else ""
-        tip = f' title="{subtitle}"' if subtitle else ""
-        cur = 'help' if subtitle else 'default'
-        return (f'<div class="col"><div class="stat-card"{tip} style="cursor:{cur}">'
+        tip_attr = f' title="{tooltip}"' if tooltip else (f' title="{subtitle}"' if subtitle else "")
+        cur = 'help' if (tooltip or subtitle) else 'default'
+        # Bootstrap tooltip via data-bs-toggle jeśli jest dłuższy opis
+        bs_tip = ""
+        if tooltip:
+            safe = tooltip.replace('"', '&quot;')
+            bs_tip = f' data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{safe}"'
+        return (f'<div class="col"><div class="stat-card"{tip_attr}{bs_tip} style="cursor:{cur}">'
                 f'<div class="stat-val sm" style="color:{color}">{val}</div>'
                 f'<div class="stat-lbl">{lbl}</div>'
                 f'{sub_html}'
                 f'</div></div>')
 
     kpi_html = (
-        kpi(ppg,  "PPG",     "#1a2b4a", "points per game") +
-        kpi(efg,  "eFG%",    "#1a2b4a", "effective FG%") +
-        kpi(ts,   "TS%",     "#1a2b4a", "true shooting %") +
-        kpi(usg,  "USG%",    "#D85A30", "usage rate") +
-        kpi(p2pct,"2PT%",    "#1a2b4a", "za 2 punkty") +
-        kpi(p3pct,"3PT%",    "#1a2b4a", "za 3 punkty") +
-        kpi(ftpct,"FT%",     "#1a2b4a", "rzuty wolne") +
-        kpi(avg_t_tot,"Śr.czas","#555", "średni czas akcji") +
-        kpi(f"{ast_tot/n:.1f}", "APG",  "#1a2b4a", "asysty/mecz") +
-        kpi(f"{br_tot/n:.1f}",  "BR",    "#1a2b4a", "straty") +
-        kpi(f"{fin_tot/n:.1f}", "FIN",   "#1a2b4a", "wykończenia") +
-        kpi(str(n), "Mecze",  "#888")
+        kpi(ppg,  "PPG",     "#1a2b4a", "points per game",
+            "Średnia punktów na mecz. Suma wszystkich zdobytych punktów / liczba meczów.") +
+        kpi(efg,  "eFG%",    "#1a2b4a", "effective FG%",
+            "Skuteczność rzutów z wagą dla trójek. Wzór: (2PM + 1.5×3PM) / FGA. Trójka warta więcej niż dwójka.") +
+        kpi(ts,   "TS%",     "#1a2b4a", "true shooting %",
+            "Prawdziwa skuteczność uwzględniająca rzuty wolne. Wzór: PTS / (2 × (FGA + 0.44×FTA)).") +
+        kpi(usg,  "USG%",    "#D85A30", "usage rate",
+            "Procent akcji drużyny zakończonych przez zawodnika. Wzór: (FGA + 0.44×FTA + BR) / akcje drużyny.") +
+        kpi(p2pct,"2PT%",    "#1a2b4a", "za 2 punkty",
+            "Skuteczność rzutów za 2 punkty. Celne za 2 / wszystkie próby za 2.") +
+        kpi(p3pct,"3PT%",    "#1a2b4a", "za 3 punkty",
+            "Skuteczność rzutów za 3 punkty. Celne za 3 / wszystkie próby za 3.") +
+        kpi(ftpct,"FT%",     "#1a2b4a", "rzuty wolne",
+            "Skuteczność rzutów wolnych. Celne wolne / wszystkie próby wolne.") +
+        kpi(avg_t_tot, "Śr.czas", "#555", "średni czas akcji",
+            "Średni czas trwania akcji zakończonych przez zawodnika (w sekundach). Im niższy — tym szybsze decyzje.") +
+        kpi(f"{ast_tot/n:.1f}", "A",   "#1a2b4a", "asysty/mecz",
+            "Średnia asyst na mecz. Asysta = podanie bezpośrednio poprzedzające celny rzut kolegi.") +
+        kpi(f"{br_tot/n:.1f}",  "BR",  "#1a2b4a", "brak rzutu/mecz",
+            "Średnia strat na mecz. Brak rzutu (BR) = akcja zakończona utratą piłki bez oddania rzutu.") +
+        kpi(f"{fin_tot/n:.1f}", "FIN", "#1a2b4a", "wykończenia/mecz",
+            "Średnia wykończeń na mecz. Wykończenie = zawodnik oddał rzut (celny lub niecelny) lub wymusił faul.") +
+        kpi(str(n), "Mecze", "#888")
     )
 
     # Tabela meczów
@@ -4526,7 +4567,6 @@ def profil_zawodnika(roster_id):
 """
 
     scripts = f"""<script>
-(function() {{
   var labels = {labels_js};
   var nMecze = labels.length;
   var barW = Math.max(16, Math.min(50, Math.floor(280 / Math.max(nMecze, 1))));
@@ -4629,6 +4669,11 @@ def profil_zawodnika(roster_id):
   // Inicjalizacja po załadowaniu Chart.js
   switchMetric('PTS');
 
+  // Inicjalizacja Bootstrap tooltipów na kafelkach KPI
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {{
+    new bootstrap.Tooltip(el, {{ trigger: 'hover', html: false }});
+  }});
+
   // Wykres skuteczności
   var ctx2 = document.getElementById('chartShoot').getContext('2d');
   new Chart(ctx2, {{
@@ -4654,7 +4699,6 @@ def profil_zawodnika(roster_id):
       }}
     }}
   }});
-}})();
 </script>"""
 
     return render_template_string(base(content, scripts, active="players"))
