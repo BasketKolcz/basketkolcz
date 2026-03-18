@@ -14,6 +14,98 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = False
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
+import functools, hashlib
+
+# ── Dane użytkownika (hashed password) ────────────────────────────────────────
+USERS = {
+    "kosma.kolcz@gmail.com": {
+        "name": "Kosma Kołcz",
+        "password_hash": hashlib.sha256("88614855_Basket".encode()).hexdigest(),
+    }
+}
+
+def login_required(f):
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("logged_in"):
+            return redirect(url_for("login", next=request.path))
+        return f(*args, **kwargs)
+    return decorated
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        email    = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        user = USERS.get(email)
+        if user and user["password_hash"] == hashlib.sha256(password.encode()).hexdigest():
+            session["logged_in"] = True
+            session["user_name"] = user["name"]
+            session["user_email"] = email
+            next_url = request.args.get("next") or url_for("index")
+            return redirect(next_url)
+        error = "Nieprawidłowy login lub hasło."
+    return render_template_string(LOGIN_HTML, error=error)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logowanie — Basket Kołcz</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #f0f2f5; display: flex; align-items: center;
+         justify-content: center; min-height: 100vh; }
+  .card { background: #fff; border-radius: 12px; padding: 2.5rem 2rem;
+          width: 100%; max-width: 380px; box-shadow: 0 4px 24px rgba(0,0,0,.08); }
+  .logo { text-align: center; margin-bottom: 1.5rem; }
+  .logo-dot { color: #f97316; font-size: 1.5rem; }
+  .logo-name { font-size: 1.4rem; font-weight: 700; color: #1a2b4a; }
+  .logo-sub { font-size: .78rem; color: #888; margin-top: 2px; }
+  label { display: block; font-size: .82rem; font-weight: 500;
+          color: #444; margin-bottom: 4px; margin-top: 1rem; }
+  input { width: 100%; padding: .55rem .75rem; border: 1px solid #d1d5db;
+          border-radius: 6px; font-size: .9rem; outline: none; transition: border .15s; }
+  input:focus { border-color: #1a2b4a; }
+  .btn { width: 100%; margin-top: 1.5rem; padding: .65rem;
+         background: #1a2b4a; color: #fff; border: none; border-radius: 6px;
+         font-size: .95rem; font-weight: 600; cursor: pointer; transition: background .15s; }
+  .btn:hover { background: #263f6a; }
+  .error { background: #fff0f0; color: #c0392b; border: 1px solid #f5c6cb;
+           border-radius: 6px; padding: .6rem .8rem; font-size: .82rem; margin-top: 1rem; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <div><span class="logo-dot">●</span> <span class="logo-name">Basket Kołcz</span></div>
+    <div class="logo-sub">Analytics Platform</div>
+  </div>
+  <form method="POST">
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" placeholder="twoj@email.com"
+           autocomplete="username" required>
+    <label for="password">Hasło</label>
+    <input type="password" id="password" name="password" placeholder="••••••••"
+           autocomplete="current-password" required>
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+    <button class="btn" type="submit">Zaloguj się</button>
+  </form>
+</div>
+</body>
+</html>
+"""
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -875,6 +967,11 @@ def nav(active="home"):
   <div class="nav-season brand-text"><strong>{gtk_name}</strong>Sezon {season}</div>
   <div class="nav-section brand-text">Nawigacja</div>
   {links.replace("##TEAM##", team_section).replace("##STATS##", stats_section)}
+  <div style="margin-top:auto;padding:1rem .75rem;border-top:1px solid rgba(255,255,255,.08)">
+    <div style="font-size:.72rem;color:rgba(255,255,255,.5);margin-bottom:6px">Zalogowany jako</div>
+    <div style="font-size:.8rem;color:#fff;font-weight:500;margin-bottom:8px">{session.get('user_name','')}</div>
+    <a href="/logout" style="display:block;text-align:center;padding:6px;background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border-radius:6px;font-size:.75rem;text-decoration:none;">Wyloguj</a>
+  </div>
 </div>
 
 <script>
@@ -967,6 +1064,7 @@ function initSortable(tableId, skipCol) {{
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/")
+@login_required
 def index():
     try: init_db()
     except: pass
@@ -1406,6 +1504,7 @@ os.makedirs(PENDING_DIR, exist_ok=True)
 
 
 @app.route("/upload", methods=["POST"])
+@login_required
 def upload():
     if "file" not in request.files:
         flash("Nie wybrano pliku","error"); return redirect(url_for("index"))
@@ -1529,6 +1628,7 @@ def upload():
 
 
 @app.route("/walidacja/pobierz-z-bledami")
+@login_required
 def download_with_errors():
     """Pobierz oryginalny plik z zaznaczonymi błędami na czerwono"""
     token = session.get("pt","")
@@ -1762,6 +1862,7 @@ def download_with_errors():
 
 
 @app.route("/walidacja")
+@login_required
 def validation_report():
     vr = session.get("vr")
     if not vr:
@@ -1860,6 +1961,7 @@ def validation_report():
 
 
 @app.route("/upload/force", methods=["POST"])
+@login_required
 def upload_force():
     """Zapisz plik mimo ostrzeżeń"""
     token      = session.get("pt","")
@@ -1895,6 +1997,7 @@ def upload_force():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/historia")
+@login_required
 def historia():
     try: init_db()
     except: pass
@@ -2054,6 +2157,7 @@ function sortTable(col) {
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/mecz/<int:match_id>")
+@login_required
 def mecz(match_id):
     db = get_db(); cur = db.cursor()
     cur.execute("SELECT * FROM matches WHERE id=%s", (match_id,))
@@ -3315,6 +3419,7 @@ document.addEventListener('click', function(e) {{
     return render_template_string(base(content, scripts, active="history"))
 
 @app.route("/mecz/<int:match_id>/delete")
+@login_required
 def mecz_delete(match_id):
     db = get_db(); cur = db.cursor()
     cur.execute("DELETE FROM matches WHERE id=%s", (match_id,))
@@ -3327,6 +3432,7 @@ def mecz_delete(match_id):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/mecz/<int:match_id>/raport-trenerski")
+@login_required
 def raport_trenerski(match_id):
     db = get_db(); cur = db.cursor()
     cur.execute("SELECT * FROM matches WHERE id=%s", (match_id,))
@@ -3589,6 +3695,7 @@ def raport_trenerski(match_id):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/sezon")
+@login_required
 def sezon():
     sezon_filter = request.args.get("sezon", get_setting("current_season") or "2024/25")
     db = get_db(); cur = db.cursor()
@@ -4012,6 +4119,7 @@ new Chart(document.getElementById('winChart'),{{
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/zawodnicy")
+@login_required
 def zawodnicy():
     sezon_filter = request.args.get("sezon", get_setting("current_season") or "2024/25")
     db = get_db(); cur = db.cursor()
@@ -4221,6 +4329,7 @@ window.addEventListener('DOMContentLoaded', () => { _zawDir[1]=true; sortZaw(1);
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/zawodnik/<int:roster_id>")
+@login_required
 def profil_zawodnika(roster_id):
     sezon_filter = request.args.get("sezon", get_setting("current_season") or "2024/25")
     db = get_db(); cur = db.cursor()
@@ -4720,6 +4829,7 @@ def profil_zawodnika(roster_id):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/ustawienia", methods=["GET","POST"])
+@login_required
 def ustawienia():
     if request.method == "POST":
         set_setting("gtk_name", request.form.get("gtk_name","GTK"))
@@ -5526,6 +5636,7 @@ def _get_szablon_b64():
 
 
 @app.route("/mecz/<int:match_id>/export/xlsx")
+@login_required
 def export_match_xlsx(match_id):
     db = get_db(); cur = db.cursor()
     cur.execute("SELECT * FROM matches WHERE id=%s", (match_id,))
@@ -5686,6 +5797,7 @@ def export_match_xlsx(match_id):
 
 
 @app.route("/mecz/<int:match_id>/export/pdf")
+@login_required
 def export_match_pdf(match_id):
     db = get_db(); cur = db.cursor()
     cur.execute("SELECT * FROM matches WHERE id=%s", (match_id,))
@@ -5942,6 +6054,7 @@ def export_match_pdf(match_id):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/template/zapis")
+@login_required
 def template_zapis():
     wb = openpyxl.Workbook()
 
@@ -6107,6 +6220,7 @@ def template_zapis():
 
 
 @app.route("/template/szablon")
+@login_required
 def template_szablon():
     wb = openpyxl.Workbook()
     HDR=PatternFill("solid",fgColor="1A2B4A"); HDR_F=Font(color="FFFFFF",bold=True,size=10)
@@ -6148,6 +6262,7 @@ def template_szablon():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/roster")
+@login_required
 def roster():
     try: init_db()
     except: pass
@@ -6265,6 +6380,7 @@ function toggleStatus(id, btn) {
 
 
 @app.route("/roster/szablon")
+@login_required
 def roster_szablon():
     """Pobierz szablon Excel do importu zawodników"""
     wb = openpyxl.Workbook()
@@ -6347,6 +6463,7 @@ def roster_szablon():
 
 
 @app.route("/roster/import", methods=["POST"])
+@login_required
 def roster_import():
     """Importuj zawodników z pliku Excel"""
     if "file" not in request.files:
@@ -6437,7 +6554,9 @@ def roster_import():
 
 
 @app.route("/roster/nowy", methods=["GET","POST"])
+@login_required
 @app.route("/roster/<int:player_id>/edit", methods=["GET","POST"])
+@login_required
 def roster_edit(player_id=None):
     try: init_db()
     except: pass
@@ -6541,6 +6660,7 @@ def roster_edit(player_id=None):
 
 
 @app.route("/roster/<int:player_id>/toggle", methods=["POST"])
+@login_required
 def roster_toggle(player_id):
     from flask import jsonify
     try:
@@ -6559,6 +6679,7 @@ def roster_toggle(player_id):
 
 
 @app.route("/roster/<int:player_id>/delete")
+@login_required
 def roster_delete(player_id):
     db = get_db(); cur = db.cursor()
     cur.execute("DELETE FROM roster WHERE id=%s", (player_id,))
@@ -6572,6 +6693,7 @@ def roster_delete(player_id):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/mecz/<int:match_id>/edytuj", methods=["GET","POST"])
+@login_required
 def mecz_edytuj(match_id):
     try: init_db()
     except: pass
