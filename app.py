@@ -6554,7 +6554,6 @@ def roster_import():
 
 
 @app.route("/roster/nowy", methods=["GET","POST"])
-@login_required
 @app.route("/roster/<int:player_id>/edit", methods=["GET","POST"])
 @login_required
 def roster_edit(player_id=None):
