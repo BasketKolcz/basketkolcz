@@ -1984,6 +1984,139 @@ def mecz(match_id):
         nr_name_map = {}
     cur.close()
 
+    # ── Momentum kwart ────────────────────────────────────────────────────────
+    def quarter_momentum():
+        rows = ""
+        for qn in [1, 2, 3, 4]:
+            qg = next((r for r in all_stats if r["druzyna"]=="gtk" and r["kwarta"]==qn), {})
+            qo = next((r for r in all_stats if r["druzyna"]=="opp" and r["kwarta"]==qn), {})
+            pg = qg.get("pts", 0) or 0
+            po = qo.get("pts", 0) or 0
+            if pg > po:
+                res = f'<span style="background:#e8f5e9;color:#1a5c2a;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">W +{pg-po}</span>'
+            elif po > pg:
+                res = f'<span style="background:#ffebee;color:#8b1a1a;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">L -{po-pg}</span>'
+            else:
+                res = '<span style="background:#f5f5f5;color:#666;padding:2px 8px;border-radius:12px;font-size:11px">=</span>'
+            q_labels = {1:"#c8e6c9", 2:"#bbdefb", 3:"#fff9c4", 4:"#fce4ec"}
+            q_text   = {1:"#1a5c2a", 2:"#0d47a1", 3:"#f57f17", 4:"#880e4f"}
+            efg_g = f"{(qg.get('p2m',0)+1.5*qg.get('p3m',0))/(qg.get('p2a',0)+qg.get('p3a',0)):.0%}" if (qg.get('p2a',0)+qg.get('p3a',0)) else "-"
+            efg_o = f"{(qo.get('p2m',0)+1.5*qo.get('p3m',0))/(qo.get('p2a',0)+qo.get('p3a',0)):.0%}" if (qo.get('p2a',0)+qo.get('p3a',0)) else "-"
+            rows += f"""<tr>
+              <td><span style="background:{q_labels[qn]};color:{q_text[qn]};padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">{qn}Q</span></td>
+              <td class="text-center">{res}</td>
+              <td class="text-center fw-bold" style="color:#1a2b4a">{pg}</td>
+              <td class="text-center" style="color:#888">{po}</td>
+              <td class="text-center">{efg_g}</td>
+              <td class="text-center" style="color:#888">{efg_o}</td>
+              <td class="text-center">{qg.get('br',0) or 0}</td>
+              <td class="text-center" style="color:#888">{qo.get('br',0) or 0}</td>
+              <td class="text-center">{qg.get('poss',0) or 0}</td>
+            </tr>"""
+        q_results = []
+        for qn in [1,2,3,4]:
+            qg = next((r for r in all_stats if r["druzyna"]=="gtk" and r["kwarta"]==qn), {})
+            qo = next((r for r in all_stats if r["druzyna"]=="opp" and r["kwarta"]==qn), {})
+            pg = qg.get("pts",0) or 0; po = qo.get("pts",0) or 0
+            q_results.append("W" if pg>po else ("L" if po>pg else "="))
+        streak_html = ""
+        for r in q_results:
+            col = "#1a6b3c" if r=="W" else ("#8b1a1a" if r=="L" else "#888")
+            streak_html += f'<span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:{col};color:#fff;font-size:11px;font-weight:600;margin-right:4px">{r}</span>'
+        best = 0; cur_streak = 0
+        for r in q_results:
+            cur_streak = cur_streak+1 if r=="W" else 0
+            best = max(best, cur_streak)
+        best_html = f'<span style="font-size:11px;color:#888">Najlepsza seria: <b style="color:#1a6b3c">{best} kwart{" z rzędu" if best>1 else ""}</b></span>' if best >= 1 else ""
+        return f"""
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          {streak_html}{best_html}
+        </div>
+        <div class="table-responsive">
+        <table class="table table-hover mb-0" style="font-size:.82rem">
+          <thead><tr>
+            <th>Q</th><th class="text-center">Wynik</th>
+            <th class="text-center" style="color:#1a2b4a">PKT</th>
+            <th class="text-center" style="color:#888">PKT rywal</th>
+            <th class="text-center" style="color:#1a2b4a">eFG%</th>
+            <th class="text-center" style="color:#888">eFG% rywal</th>
+            <th class="text-center" style="color:#1a2b4a">BR</th>
+            <th class="text-center" style="color:#888">BR rywal</th>
+            <th class="text-center">POSS</th>
+          </tr></thead>
+          <tbody>{rows}</tbody>
+        </table></div>"""
+
+    # ── Clutch stats ──────────────────────────────────────────────────────────
+    def clutch_stats():
+        if not flow_rows:
+            return '<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak danych clutch — wgraj mecz ponownie aby wygenerować.</p>'
+        clutch_intervals = set()
+        for row in flow_rows:
+            diff = abs((row["pts_gtk"] or 0) - (row["pts_opp"] or 0))
+            t = row["czas_sek"] or 0
+            if diff <= 5 and t <= 300:
+                clutch_intervals.add((row["kwarta"], int(t // 30)))
+        if not clutch_intervals:
+            return '<p class="text-muted p-3 mb-0" style="font-size:.82rem">Brak momentów clutch (różnica ≤5 pkt w ostatnich 5 min) w tym meczu.</p>'
+        clutch_qtrs = set(q for q, _ in clutch_intervals)
+        c = {k: 0 for k in ["pts_g","pts_o","poss_g","poss_o","p2m_g","p2a_g","p3m_g","p3a_g",
+                              "ftm_g","fta_g","br_g","p2m_o","p2a_o","p3m_o","p3a_o","ftm_o","fta_o","br_o"]}
+        for qn in clutch_qtrs:
+            qg = next((r for r in all_stats if r["druzyna"]=="gtk" and r["kwarta"]==qn), {})
+            qo = next((r for r in all_stats if r["druzyna"]=="opp" and r["kwarta"]==qn), {})
+            n_clutch = sum(1 for q, _ in clutch_intervals if q == qn)
+            ratio = min(n_clutch / 10.0, 1.0)
+            def sc(d, k): return round((d.get(k,0) or 0) * ratio)
+            c["pts_g"]+=sc(qg,"pts"); c["pts_o"]+=sc(qo,"pts")
+            c["poss_g"]+=sc(qg,"poss"); c["poss_o"]+=sc(qo,"poss")
+            c["p2m_g"]+=sc(qg,"p2m"); c["p2a_g"]+=sc(qg,"p2a")
+            c["p3m_g"]+=sc(qg,"p3m"); c["p3a_g"]+=sc(qg,"p3a")
+            c["ftm_g"]+=sc(qg,"ftm"); c["fta_g"]+=sc(qg,"fta"); c["br_g"]+=sc(qg,"br")
+            c["p2m_o"]+=sc(qo,"p2m"); c["p2a_o"]+=sc(qo,"p2a")
+            c["p3m_o"]+=sc(qo,"p3m"); c["p3a_o"]+=sc(qo,"p3a")
+            c["ftm_o"]+=sc(qo,"ftm"); c["fta_o"]+=sc(qo,"fta"); c["br_o"]+=sc(qo,"br")
+        def pct(m,a): return f"{m/a:.0%}" if a else "-"
+        def bld(vg, vo, higher=True):
+            try:
+                fg=float(str(vg).replace('%','')); fo=float(str(vo).replace('%',''))
+                sg="font-weight:700;color:#1a6b3c" if (higher and fg>fo) or (not higher and fg<fo) else "color:#555"
+                so="font-weight:700;color:#8b1a1a" if (higher and fo>fg) or (not higher and fo<fg) else "color:#555"
+            except: sg=so="color:#555"
+            return sg, so
+        metrics = [
+            ("Punkty",     c["pts_g"],  c["pts_o"],  True),
+            ("Posiadania", c["poss_g"], c["poss_o"], True),
+            ("eFG%",       pct(c["p2m_g"]+int(1.5*c["p3m_g"]), c["p2a_g"]+c["p3a_g"]),
+                           pct(c["p2m_o"]+int(1.5*c["p3m_o"]), c["p2a_o"]+c["p3a_o"]), True),
+            ("FT%",        pct(c["ftm_g"],c["fta_g"]), pct(c["ftm_o"],c["fta_o"]), True),
+            ("2PM/A",      f"{c['p2m_g']}/{c['p2a_g']}", f"{c['p2m_o']}/{c['p2a_o']}", True),
+            ("3PM/A",      f"{c['p3m_g']}/{c['p3a_g']}", f"{c['p3m_o']}/{c['p3a_o']}", True),
+            ("FTM/A",      f"{c['ftm_g']}/{c['fta_g']}", f"{c['ftm_o']}/{c['fta_o']}", True),
+            ("Straty (BR)",c["br_g"],   c["br_o"],   False),
+        ]
+        rows = ""
+        for lbl, vg, vo, higher in metrics:
+            sg, so = bld(vg, vo, higher)
+            rows += f'<tr><td style="font-size:.82rem"><b>{lbl}</b></td><td class="text-center" style="{sg}">{vg}</td><td class="text-center" style="{so}">{vo}</td></tr>'
+        wc = "GTK lepsza" if c["pts_g"]>c["pts_o"] else ("Rywal lepszy" if c["pts_o"]>c["pts_g"] else "Remis")
+        wc_col = "#1a6b3c" if c["pts_g"]>c["pts_o"] else ("#8b1a1a" if c["pts_o"]>c["pts_g"] else "#888")
+        n_qtr = len(clutch_qtrs)
+        return f"""
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          <span style="background:#fff3cd;color:#856404;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600">⏱ Clutch: {n_qtr} kwart{'y' if n_qtr>1 else 'a'}</span>
+          <span style="background:#f0f0f0;color:{wc_col};padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600">{wc} w clutch</span>
+          <span style="font-size:11px;color:#aaa">Różnica ≤5 pkt · ostatnie 5 min kwarty</span>
+        </div>
+        <table class="table table-sm mb-0">
+          <thead><tr>
+            <th>Metryka</th>
+            <th class="text-center" style="color:#1a6b3c">{gtk_name}</th>
+            <th class="text-center" style="color:#8b1a1a">{name_opp}</th>
+          </tr></thead>
+          <tbody>{rows}</tbody>
+        </table>"""
+
     def build_suma(druzyna):
         s = {"pts":0,"poss":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"br":0,"fd":0}
         for row in all_stats:
@@ -2269,6 +2402,8 @@ def mecz(match_id):
           {''.join(f'<span style="background:#e8f5e9;color:#1a5c2a;padding:2px 8px;border-radius:12px">{p}-0 GTK</span>' for _,__,p in sorted(runs_gtk,key=lambda x:-x[2])[:3])}
           {''.join(f'<span style="background:#ffebee;color:#8b1a1a;padding:2px 8px;border-radius:12px">{p}-0 OPP</span>' for _,__,p in sorted(runs_opp,key=lambda x:-x[2])[:3])}
         </div>
+        {momentum_table()}
+        {clutch_stats()}
         <script>
         (function(){{
           var ctx = document.getElementById('flowChart').getContext('2d');
@@ -2353,6 +2488,197 @@ def mecz(match_id):
         }})();
         </script>"""
 
+    # Clutch stats — ostatnie 5 min Q4 przy różnicy ≤5
+    def clutch_stats():
+        if not flow_rows:
+            return ""
+
+        pts_gtk_final = m["wynik_gtk"] or 0
+        pts_opp_final = m["wynik_opp"] or 0
+
+        # Znajdź zdarzenia clutch: Q4, czas_sek <= 300 (ostatnie 5 min), |diff| <= 5
+        # flow_rows: (kwarta, czas_sek, pts_gtk, pts_opp)
+        clutch_events = []
+        for row in flow_rows:
+            q = row["kwarta"]
+            t = row["czas_sek"] or 0
+            pg = row["pts_gtk"]
+            po = row["pts_opp"]
+            if q == 4 and t <= 300 and abs(pg - po) <= 5:
+                clutch_events.append((q, t, pg, po))
+
+        # Czy mecz w ogóle miał clutch time?
+        # Sprawdź czy na początku Q4 różnica była ≤15 (szansa na clutch)
+        q4_events = [r for r in flow_rows if r["kwarta"] == 4]
+        if not q4_events:
+            return ""
+        first_q4_diff = abs(q4_events[0]["pts_gtk"] - q4_events[0]["pts_opp"])
+
+        if not clutch_events and first_q4_diff > 15:
+            return ""  # mecz nie był wyrównany — brak clutch
+
+        # Policz punkty w clutch time
+        if clutch_events:
+            pts_gtk_clutch = clutch_events[-1][2] - clutch_events[0][2]
+            pts_opp_clutch = clutch_events[-1][3] - clutch_events[0][3]
+            clutch_poss = len(clutch_events)
+        else:
+            pts_gtk_clutch = pts_opp_clutch = clutch_poss = 0
+
+        # Kto prowadził na początku clutch i jak mecz się skończył
+        if clutch_events:
+            start_diff = clutch_events[0][2] - clutch_events[0][3]
+            end_diff = pts_gtk_final - pts_opp_final
+        else:
+            start_diff = end_diff = pts_gtk_final - pts_opp_final
+
+        clutch_result = "Wygrana w clutch" if end_diff > 0 else ("Porażka w clutch" if end_diff < 0 else "Remis")
+        result_color = "#1a6b3c" if end_diff > 0 else ("#8b1a1a" if end_diff < 0 else "#888")
+
+        if not clutch_events:
+            return f"""
+            <div style="margin-top:16px;padding-top:14px;border-top:.5px solid var(--color-border-tertiary)">
+              <div style="font-size:11px;font-weight:600;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Clutch time (4Q, różnica ≤5)</div>
+              <p style="font-size:.82rem;color:var(--color-text-tertiary)">Brak momentów clutch w tym meczu — prowadzenie było zbyt duże.</p>
+            </div>"""
+
+        gtk_clutch_ppp = f"{pts_gtk_clutch/clutch_poss:.2f}" if clutch_poss else "—"
+        opp_clutch_ppp = f"{pts_opp_clutch/clutch_poss:.2f}" if clutch_poss else "—"
+
+        return f"""
+        <div style="margin-top:16px;padding-top:14px;border-top:.5px solid var(--color-border-tertiary)">
+          <div style="font-size:11px;font-weight:600;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">
+            Clutch time — 4Q ostatnie 5 min przy różnicy ≤5 pkt
+            <span style="font-weight:700;color:{result_color};margin-left:10px;font-size:12px;text-transform:none">{clutch_result}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px">
+            <div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;text-align:center">
+              <div style="font-size:20px;font-weight:500;color:#1a6b3c">{pts_gtk_clutch}</div>
+              <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase">PKT GTK</div>
+            </div>
+            <div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;text-align:center">
+              <div style="font-size:20px;font-weight:500;color:#8b1a1a">{pts_opp_clutch}</div>
+              <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase">PKT Rywal</div>
+            </div>
+            <div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;text-align:center">
+              <div style="font-size:20px;font-weight:500;color:var(--color-text-primary)">{gtk_clutch_ppp}</div>
+              <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase">PPP GTK</div>
+            </div>
+            <div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;text-align:center">
+              <div style="font-size:20px;font-weight:500;color:var(--color-text-primary)">{clutch_poss}</div>
+              <div style="font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase">Akcji</div>
+            </div>
+          </div>
+          <div style="font-size:.75rem;color:var(--color-text-tertiary)">
+            Różnica na wejściu w clutch:
+            <b style="color:{'#1a6b3c' if start_diff>0 else '#8b1a1a'}">{'+' if start_diff>0 else ''}{start_diff}</b>
+            → wynik końcowy: <b style="color:{result_color}">{pts_gtk_final}:{pts_opp_final}</b>
+          </div>
+        </div>"""
+
+    # Momentum kwart
+    def momentum_table():
+        if not flow_rows:
+            return ""
+
+        pts_gtk_final = m["wynik_gtk"] or 0
+        pts_opp_final = m["wynik_opp"] or 0
+
+        rows_html = ""
+        for qn in [1, 2, 3, 4]:
+            q_events = [r for r in flow_rows if r["kwarta"] == qn]
+
+            # Punkty w tej kwarcie
+            # Punkty startowe = ostatni event poprzedniej kwarty
+            prev_events = [r for r in flow_rows if r["kwarta"] < qn]
+            start_g = prev_events[-1]["pts_gtk"] if prev_events else 0
+            start_o = prev_events[-1]["pts_opp"] if prev_events else 0
+
+            if q_events:
+                end_g = q_events[-1]["pts_gtk"]
+                end_o = q_events[-1]["pts_opp"]
+            else:
+                # Brak eventów w tej kwarcie — wyciągnij z match_stats
+                qs = next((r for r in all_stats if r["druzyna"]=="gtk" and r["kwarta"]==qn), {})
+                os_ = next((r for r in all_stats if r["druzyna"]=="opp" and r["kwarta"]==qn), {})
+                end_g = start_g + (qs.get("pts",0) or 0)
+                end_o = start_o + (os_.get("pts",0) or 0)
+
+            q_gtk = end_g - start_g
+            q_opp = end_o - start_o
+            q_winner = "gtk" if q_gtk > q_opp else ("opp" if q_opp > q_gtk else "tie")
+
+            # Największy run GTK w tej kwarcie
+            max_run_g = max_run_o = 0
+            cur_run_g = cur_run_o = 0
+            prev_g2 = prev_o2 = None
+            for ev in q_events:
+                dg = ev["pts_gtk"] - (prev_g2 if prev_g2 is not None else start_g)
+                do_ = ev["pts_opp"] - (prev_o2 if prev_o2 is not None else start_o)
+                if dg > 0 and do_ == 0:
+                    cur_run_g += dg; cur_run_o = 0
+                elif do_ > 0 and dg == 0:
+                    cur_run_o += do_; cur_run_g = 0
+                else:
+                    cur_run_g = cur_run_o = 0
+                max_run_g = max(max_run_g, cur_run_g)
+                max_run_o = max(max_run_o, cur_run_o)
+                prev_g2 = ev["pts_gtk"]; prev_o2 = ev["pts_opp"]
+
+            # Jak kończymy kwartę (ostatnie 60s = czas_sek <= 60)
+            late_events = [r for r in q_events if (r["czas_sek"] or 0) <= 60]
+            if late_events:
+                late_start_g = late_events[0]["pts_gtk"] - (late_events[0]["pts_gtk"] - late_events[0]["pts_gtk"])
+                lg = late_events[-1]["pts_gtk"] - late_events[0]["pts_gtk"] + (late_events[0]["pts_gtk"] - q_events[q_events.index(late_events[0])-1]["pts_gtk"] if q_events.index(late_events[0]) > 0 else 0)
+                lo = late_events[-1]["pts_opp"] - late_events[0]["pts_opp"]
+                late_g = late_events[-1]["pts_gtk"] - (q_events[q_events.index(late_events[0])-1]["pts_gtk"] if q_events.index(late_events[0]) > 0 else start_g)
+                late_o = late_events[-1]["pts_opp"] - (q_events[q_events.index(late_events[0])-1]["pts_opp"] if q_events.index(late_events[0]) > 0 else start_o)
+                late_str = f"{late_g}:{late_o}"
+                late_color = "#1a6b3c" if late_g > late_o else ("#8b1a1a" if late_o > late_g else "#888")
+            else:
+                late_str = "—"
+                late_color = "#888"
+
+            # Kolory
+            q_colors = {1:"#c8e6c9;color:#1a5c2a", 2:"#bbdefb;color:#0d47a1",
+                        3:"#fff9c4;color:#f57f17", 4:"#fce4ec;color:#880e4f"}
+            qbg = q_colors.get(qn, "#eee;color:#333")
+            win_icon = "✓" if q_winner=="gtk" else ("✗" if q_winner=="opp" else "=")
+            win_color = "#1a6b3c" if q_winner=="gtk" else ("#8b1a1a" if q_winner=="opp" else "#888")
+            score_style = f"font-weight:700;color:{'#1a6b3c' if q_gtk>q_opp else ('#8b1a1a' if q_opp>q_gtk else '#888')}"
+
+            rows_html += f"""<tr>
+              <td><span style="background:{qbg};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">{qn}Q</span></td>
+              <td style="text-align:center;{score_style}">{q_gtk}:{q_opp}</td>
+              <td style="text-align:center;font-weight:600;color:{win_color}">{win_icon}</td>
+              <td style="text-align:center;font-size:.8rem">
+                {'<span style="background:#e8f5e9;color:#1a5c2a;padding:1px 6px;border-radius:10px">'+str(max_run_g)+'-0</span>' if max_run_g>=5 else (str(max_run_g)+'-0' if max_run_g>0 else '—')}
+              </td>
+              <td style="text-align:center;font-size:.8rem">
+                {'<span style="background:#ffebee;color:#8b1a1a;padding:1px 6px;border-radius:10px">'+str(max_run_o)+'-0</span>' if max_run_o>=5 else (str(max_run_o)+'-0' if max_run_o>0 else '—')}
+              </td>
+              <td style="text-align:center;font-size:.8rem;color:{late_color}">{late_str}</td>
+            </tr>"""
+
+        return f"""
+        <div style="margin-top:16px;padding-top:14px;border-top:.5px solid var(--color-border-tertiary)">
+          <div style="font-size:11px;font-weight:600;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Momentum kwart</div>
+          <div class="table-responsive">
+          <table class="table table-hover mb-0" style="font-size:.82rem">
+            <thead><tr style="background:#f0f4ff">
+              <th>Q</th>
+              <th style="text-align:center">Wynik</th>
+              <th style="text-align:center">Kto wygrał</th>
+              <th style="text-align:center">Max run GTK</th>
+              <th style="text-align:center">Max run OPP</th>
+              <th style="text-align:center">Ostatnia min.</th>
+            </tr></thead>
+            <tbody>{rows_html}</tbody>
+          </table>
+          </div>
+          <div style="font-size:.72rem;color:var(--color-text-tertiary);margin-top:4px">Run ≥5 wyróżniony · Ostatnia min. = wynik ostatnich 60s kwarty</div>
+        </div>"""
+
     # Shot timing
     def tim_table(druzyna):
         rows = ""
@@ -2415,6 +2741,7 @@ def mecz(match_id):
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_p">Zawodnicy</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_l">Piątki</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_flow">Przebieg</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_clutch">Clutch</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#gtk_t">Timing rzutów</button></li>
   </ul>
   <div class="tab-content">
@@ -2422,6 +2749,7 @@ def mecz(match_id):
     <div class="tab-pane fade" id="gtk_p"><div class="card mt-1"><div class="card-body p-2">{p_table('gtk')}</div></div></div>
     <div class="tab-pane fade" id="gtk_l"><div class="card mt-1"><div class="card-body p-2">{lineup_table()}</div></div></div>
     <div class="tab-pane fade" id="gtk_flow"><div class="card mt-1"><div class="card-body p-2">{flow_chart()}</div></div></div>
+    <div class="tab-pane fade" id="gtk_clutch"><div class="card mt-1"><div class="card-body p-2">{clutch_stats()}</div></div></div>
     <div class="tab-pane fade" id="gtk_t"><div class="card mt-1"><div class="card-body p-2">{tim_table('gtk')}</div></div></div>
   </div>
 </div>
@@ -2443,6 +2771,7 @@ def mecz(match_id):
 <div class="tab-pane fade" id="tabCMP">
   <ul class="nav nav-tabs mt-2 mb-1" id="cmpTabs">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#cmp_metrics">Kluczowe Metryki</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#cmp_momentum">Momentum kwart</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#cmp_timing">Timing rzutów</button></li>
   </ul>
   <div class="tab-content">
@@ -2518,6 +2847,13 @@ def mecz(match_id):
         </div></div>
       </div>
     </div>
+  </div>
+
+  <div class="tab-pane fade" id="cmp_momentum">
+    <div class="card mt-2"><div class="card-body p-2">
+      <div class="section-hdr">Momentum kwart — kto dominował kiedy</div>
+      {quarter_momentum()}
+    </div></div>
   </div>
 
   <div class="tab-pane fade" id="cmp_timing">
