@@ -3960,10 +3960,16 @@ def zawodnicy():
         usg  = f"{(fga + 0.44*fta + int(p.get('br',0) or 0)) / tposs:.1%}" if tposs else "-"
         nie = p.get('ma_nieprzypisane')
         nazwa = p.get('nazwa','?')
+        grp_id = p.get('grp_id','')
         bg = "background:#fff8e1" if nie else ("background:#f8f9ff" if i%2==0 else "")
         warn = ' <span title="Przypisz zawodnika w raporcie meczu" style="color:#f9a825;font-size:.75rem">⚠ nieprzypisany</span>' if nie else ''
+        # Link do profilu tylko dla przypisanych (grp_id zaczyna się od liczby = roster_id)
+        if not nie and grp_id and grp_id.isdigit():
+            nazwa_cell = f'<a href="/zawodnik/{grp_id}?sezon={sezon_filter}" style="color:#1a2b4a;text-decoration:none;font-weight:600">{nazwa}</a>'
+        else:
+            nazwa_cell = f'{nazwa}{warn}'
         rows += f"""<tr style="{bg}">
-            <td class="fw-bold">{nazwa}{warn}</td>
+            <td class="fw-bold">{nazwa_cell}{warn if nie else ''}</td>
             <td>{ppg}</td>
             <td>{pm2}/{int(p.get('p2a',0) or 0)}</td>
             <td>{pm3}/{int(p.get('p3a',0) or 0)}</td>
@@ -4055,6 +4061,276 @@ function sortZaw(col) {
 }
 // Domyślnie sortuj po PPG malejąco
 window.addEventListener('DOMContentLoaded', () => { _zawDir[1]=true; sortZaw(1); });
+</script>"""
+
+    return render_template_string(base(content, scripts, active="players"))
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PROFIL ZAWODNIKA
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/zawodnik/<int:roster_id>")
+def profil_zawodnika(roster_id):
+    sezon_filter = request.args.get("sezon", get_setting("current_season") or "2024/25")
+    db = get_db(); cur = db.cursor()
+
+    # Dane zawodnika z roster
+    cur.execute("SELECT * FROM roster WHERE id=%s", (roster_id,))
+    zawodnik = cur.fetchone()
+    if not zawodnik:
+        flash("Zawodnik nie istnieje","error")
+        return redirect(url_for("zawodnicy"))
+
+    # Wszystkie sezony w których grał
+    cur.execute("""SELECT DISTINCT m.sezon FROM player_stats ps
+                   JOIN matches m ON ps.match_id=m.id
+                   WHERE ps.roster_id=%s ORDER BY m.sezon DESC""", (roster_id,))
+    sezony = [r["sezon"] for r in cur.fetchall()]
+
+    # Statystyki per mecz w wybranym sezonie
+    cur.execute("""
+        SELECT ps.*, m.data_meczu, m.przeciwnik, m.wynik_gtk, m.wynik_opp,
+               ms.poss as team_poss
+        FROM player_stats ps
+        JOIN matches m ON ps.match_id=m.id
+        LEFT JOIN (SELECT match_id, SUM(poss) as poss FROM match_stats
+                   WHERE druzyna='gtk' GROUP BY match_id) ms ON ms.match_id=ps.match_id
+        WHERE ps.roster_id=%s AND m.sezon=%s AND ps.druzyna='gtk'
+        ORDER BY m.data_meczu ASC
+    """, (roster_id, sezon_filter))
+    mecze_stats = list(cur.fetchall())
+
+    # Numer(y) w tym sezonie
+    cur.execute("""SELECT DISTINCT ps.nr FROM player_stats ps
+                   JOIN matches m ON ps.match_id=m.id
+                   WHERE ps.roster_id=%s AND m.sezon=%s""", (roster_id, sezon_filter))
+    numery = [str(r["nr"]) for r in cur.fetchall()]
+    cur.close()
+
+    if not mecze_stats:
+        gtk_name = get_setting("gtk_name") or "GTK"
+        content = f"""
+<div class="d-flex align-items-center gap-2 mb-3">
+  <a href="/zawodnicy" class="btn btn-outline-secondary btn-sm">← Statystyki</a>
+  <div class="page-title mb-0">👤 {zawodnik['imie']} {zawodnik['nazwisko']}</div>
+</div>
+<div class="card p-4 text-center text-muted">Brak danych w sezonie {sezon_filter}.</div>"""
+        return render_template_string(base(content, active="players"))
+
+    # Agregaty sezonu
+    def s(k): return sum(int(r.get(k,0) or 0) for r in mecze_stats)
+    n = len(mecze_stats)
+    pts_tot = s("pts"); fga_tot = s("p2a")+s("p3a"); fta_tot = s("fta")
+    pm2_tot = s("p2m"); pm3_tot = s("p3m"); ftm_tot = s("ftm")
+    br_tot = s("br"); fin_tot = s("finishes"); ast_tot = s("ast")
+    poss_tot = sum(int(r.get("team_poss",0) or 0) for r in mecze_stats)
+
+    ppg   = f"{pts_tot/n:.1f}"
+    efg   = f"{(pm2_tot+1.5*pm3_tot)/fga_tot:.1%}" if fga_tot else "—"
+    ts    = f"{pts_tot/(2*(fga_tot+0.44*fta_tot)):.1%}" if (fga_tot+fta_tot) else "—"
+    usg   = f"{(fga_tot+0.44*fta_tot+br_tot)/poss_tot:.1%}" if poss_tot else "—"
+    p2pct = f"{pm2_tot/s('p2a'):.1%}" if s('p2a') else "—"
+    p3pct = f"{pm3_tot/s('p3a'):.1%}" if s('p3a') else "—"
+    ftpct = f"{ftm_tot/fta_tot:.1%}" if fta_tot else "—"
+
+    # KPI cards
+    def kpi(val, lbl, color="#1a2b4a"):
+        return f'<div class="col"><div class="stat-card"><div class="stat-val sm" style="color:{color}">{val}</div><div class="stat-lbl">{lbl}</div></div></div>'
+
+    kpi_html = (
+        kpi(ppg, "PPG", "#1a2b4a") +
+        kpi(efg, "eFG%") +
+        kpi(ts, "TS%") +
+        kpi(usg, "USG%", "#D85A30") +
+        kpi(p2pct, "2PT%") +
+        kpi(p3pct, "3PT%") +
+        kpi(ftpct, "FT%") +
+        kpi(f"{ast_tot/n:.1f}", "APG") +
+        kpi(f"{br_tot/n:.1f}", "BPG") +
+        kpi(f"{fin_tot/n:.1f}", "FIN/G") +
+        kpi(str(n), "Mecze")
+    )
+
+    # Tabela meczów
+    match_rows = ""
+    for r in mecze_stats:
+        dt = r["data_meczu"].strftime("%d.%m") if r["data_meczu"] else ""
+        pts = int(r.get("pts",0) or 0)
+        p2a = int(r.get("p2a",0) or 0); p2m = int(r.get("p2m",0) or 0)
+        p3a = int(r.get("p3a",0) or 0); p3m = int(r.get("p3m",0) or 0)
+        fta = int(r.get("fta",0) or 0); ftm = int(r.get("ftm",0) or 0)
+        br  = int(r.get("br",0) or 0)
+        fin = int(r.get("finishes",0) or 0)
+        ast = int(r.get("ast",0) or 0)
+        fga = p2a + p3a
+        efg_m = f"{(p2m+1.5*p3m)/fga:.0%}" if fga else "—"
+        tposs = int(r.get("team_poss",0) or 0)
+        usg_m = f"{(fga+0.44*fta+br)/tposs:.0%}" if tposs else "—"
+        wg = int(r["wynik_gtk"] or 0); wo = int(r["wynik_opp"] or 0)
+        wynik_badge = f'<span class="badge" style="background:{"#e8f5e9;color:#1a5c2a" if wg>wo else "#ffebee;color:#8b1a1a"}">{"W" if wg>wo else "P"} {wg}:{wo}</span>'
+        pts_color = "#1a6b3c" if pts >= 20 else ("#D85A30" if pts >= 15 else "#333")
+        match_rows += f"""<tr>
+            <td style="font-size:.82rem;font-weight:500">{r['przeciwnik']}</td>
+            <td style="font-size:.78rem;color:#888">{dt}</td>
+            <td>{wynik_badge}</td>
+            <td class="fw-bold" style="color:{pts_color}">{pts}</td>
+            <td>{p2m}/{p2a}</td><td>{p3m}/{p3a}</td>
+            <td>{ftm}/{fta}</td>
+            <td><b>{efg_m}</b></td>
+            <td>{usg_m}</td>
+            <td>{ast}</td><td>{br}</td><td>{fin}</td>
+        </tr>"""
+
+    # Dane do wykresów JS
+    import json
+    labels_js  = json.dumps([r["przeciwnik"][:8] for r in mecze_stats])
+    pts_js     = json.dumps([int(r.get("pts",0) or 0) for r in mecze_stats])
+    efg_js     = json.dumps([round((int(r.get("p2m",0) or 0)+1.5*int(r.get("p3m",0) or 0))/(int(r.get("p2a",0) or 0)+int(r.get("p3a",0) or 0))*100,1) if (int(r.get("p2a",0) or 0)+int(r.get("p3a",0) or 0)) else None for r in mecze_stats])
+    p2pct_js   = round(pm2_tot/s('p2a')*100,1) if s('p2a') else 0
+    p3pct_js   = round(pm3_tot/s('p3a')*100,1) if s('p3a') else 0
+    ftpct_js   = round(ftm_tot/fta_tot*100,1) if fta_tot else 0
+    avg_pts    = round(pts_tot/n, 1)
+
+    initials = (zawodnik['imie'][0] + zawodnik['nazwisko'][0]).upper()
+    nr_str = " / ".join(f"#{n}" for n in numery) if numery else ""
+    gtk_name = get_setting("gtk_name") or "GTK"
+    season_opts = "".join([f'<option value="{s}" {"selected" if s==sezon_filter else ""}>{s}</option>' for s in sezony])
+
+    content = f"""
+<div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+  <a href="/zawodnicy?sezon={sezon_filter}" class="btn btn-outline-secondary btn-sm">← Statystyki</a>
+  <div class="page-title mb-0">Profil zawodnika</div>
+</div>
+
+<!-- HEADER -->
+<div class="card mb-3">
+  <div class="card-body p-3">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <div style="width:56px;height:56px;border-radius:50%;background:#1a2b4a;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#fff;flex-shrink:0">{initials}</div>
+      <div style="flex:1;min-width:160px">
+        <div style="font-size:20px;font-weight:700;color:#1a2b4a">{zawodnik['imie']} {zawodnik['nazwisko']}</div>
+        <div style="font-size:.82rem;color:#888;margin-top:2px">{nr_str} · {gtk_name}</div>
+        <div style="margin-top:6px">
+          <span class="badge" style="background:{"#e8f5e9;color:#1a5c2a" if zawodnik['aktywny'] else "#ffebee;color:#8b1a1a"}">{"Aktywny" if zawodnik['aktywny'] else "Nieaktywny"}</span>
+          <span class="badge ms-1" style="background:#e6f1fb;color:#0c447c">{n} meczów</span>
+        </div>
+      </div>
+      <form method="GET" class="d-flex gap-2 align-items-center">
+        <label style="font-size:.82rem;font-weight:600">Sezon:</label>
+        <select name="sezon" class="form-select form-select-sm" style="width:120px" onchange="this.form.submit()">
+          {season_opts}
+        </select>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- KPI -->
+<div class="row g-2 mb-3">{kpi_html}</div>
+
+<!-- WYKRESY -->
+<div class="row g-3 mb-3">
+  <div class="col-lg-7">
+    <div class="card h-100"><div class="card-body p-2">
+      <div class="section-hdr">Punkty per mecz</div>
+      <div style="position:relative;height:180px"><canvas id="chartPts"></canvas></div>
+    </div></div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card h-100"><div class="card-body p-2">
+      <div class="section-hdr">Skuteczność rzutów (sezon)</div>
+      <div style="position:relative;height:180px"><canvas id="chartShoot"></canvas></div>
+    </div></div>
+  </div>
+</div>
+
+<!-- TABELA MECZÓW -->
+<div class="card mb-3"><div class="card-body p-2">
+  <div class="section-hdr">Przebieg sezonu — mecz po meczu</div>
+  <div class="table-responsive">
+  <table class="table table-hover mb-0" style="font-size:.82rem">
+    <thead><tr>
+      <th>Rywal</th><th>Data</th><th>Wynik</th>
+      <th class="text-center">PTS</th>
+      <th class="text-center">2PM/A</th><th class="text-center">3PM/A</th><th class="text-center">FTM/A</th>
+      <th class="text-center">eFG%</th><th class="text-center">USG%</th>
+      <th class="text-center">AST</th><th class="text-center">BR</th><th class="text-center">FIN</th>
+    </tr></thead>
+    <tbody>{match_rows}</tbody>
+  </table>
+  </div>
+</div></div>
+"""
+
+    scripts = f"""<script>
+(function() {{
+  var labels = {labels_js};
+  var pts = {pts_js};
+  var efg = {efg_js};
+  var avg = {avg_pts};
+
+  var ctx1 = document.getElementById('chartPts').getContext('2d');
+  new Chart(ctx1, {{
+    type: 'bar',
+    data: {{
+      labels: labels,
+      datasets: [
+        {{
+          type: 'bar',
+          label: 'PTS',
+          data: pts,
+          backgroundColor: pts.map(v => v >= 20 ? '#1a6b3c' : v >= 15 ? '#378ADD' : '#1a2b4a'),
+          borderRadius: 3,
+          order: 2
+        }},
+        {{
+          type: 'line',
+          label: 'Średnia',
+          data: labels.map(() => avg),
+          borderColor: '#D85A30',
+          borderWidth: 2,
+          borderDash: [4,3],
+          pointRadius: 0,
+          fill: false,
+          order: 1
+        }}
+      ]
+    }},
+    options: {{
+      responsive: true, maintainAspectRatio: false,
+      plugins: {{legend: {{display: false}},
+        tooltip: {{callbacks: {{label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y}}}}}},
+      scales: {{
+        x: {{ticks: {{font: {{size: 9}}, maxRotation: 40, autoSkip: false}}}},
+        y: {{ticks: {{font: {{size: 10}}}}, grid: {{color: 'rgba(0,0,0,0.05)'}}}}
+      }}
+    }}
+  }});
+
+  var ctx2 = document.getElementById('chartShoot').getContext('2d');
+  new Chart(ctx2, {{
+    type: 'bar',
+    data: {{
+      labels: ['2PT%', '3PT%', 'FT%'],
+      datasets: [{{
+        data: [{p2pct_js}, {p3pct_js}, {ftpct_js}],
+        backgroundColor: ['#1a2b4a','#378ADD','#1D9E75'],
+        borderRadius: 4,
+        barThickness: 40
+      }}]
+    }},
+    options: {{
+      responsive: true, maintainAspectRatio: false,
+      plugins: {{legend: {{display: false}},
+        tooltip: {{callbacks: {{label: ctx => ctx.parsed.y.toFixed(1) + '%'}}}}}},
+      scales: {{
+        x: {{ticks: {{font: {{size: 12}}}}}},
+        y: {{max: 100, ticks: {{font: {{size: 10}}, callback: v => v + '%'}},
+             grid: {{color: 'rgba(0,0,0,0.05)'}}}}
+      }}
+    }}
+  }});
+}})();
 </script>"""
 
     return render_template_string(base(content, scripts, active="players"))
