@@ -2844,12 +2844,10 @@ def mecz(match_id):
   <div class="row g-2 mb-2">{kpi_cards(suma_opp, kpi_opp)}</div>
   <ul class="nav nav-tabs mt-2 mb-1" id="oppTabs">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#opp_q">Per kwarta</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#opp_p">Zawodnicy</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#opp_t">Timing rzutów</button></li>
   </ul>
   <div class="tab-content">
     <div class="tab-pane fade show active" id="opp_q"><div class="card mt-1"><div class="card-body p-2">{q_table('opp')}</div></div></div>
-    <div class="tab-pane fade" id="opp_p"><div class="card mt-1"><div class="card-body p-2">{p_table('opp')}</div></div></div>
     <div class="tab-pane fade" id="opp_t"><div class="card mt-1"><div class="card-body p-2">{tim_table('opp')}</div></div></div>
   </div>
 </div>
