@@ -1510,7 +1510,7 @@ def _do_save(wb, name_gtk, name_opp, sezon, data_meczu):
         miejsce=str(meta.get("miejsce","") or ""),
         def_lineups=def_lineups,
     )
-    session.clear()
+    for k in ['pt','ps','pd','vr']: session.pop(k, None)
     session["last_match_id"] = match_id
     flash(f"✓ Mecz {display_gtk} vs {display_opp} zapisany pomyślnie!","success")
     return redirect(url_for("mecz", match_id=match_id))
@@ -1577,7 +1577,7 @@ def upload():
                     }
                 return _re.sub(r'<[^>]+>', '', str(s))[:120]
 
-            session.clear()
+            for k in ['pt','ps','pd','vr']: session.pop(k, None)
             session["pt"] = token
             session["ps"] = sezon
             session["pd"] = data_meczu or ""
@@ -1621,7 +1621,7 @@ def upload():
                     }
                 return _re.sub(r'<[^>]+>', '', str(s))[:120]
 
-            session.clear()
+            for k in ['pt','ps','pd','vr']: session.pop(k, None)
             session["pt"] = token
             session["ps"] = sezon
             session["pd"] = data_meczu or ""
