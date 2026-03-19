@@ -1062,7 +1062,7 @@ function initSortable(tableId, skipCol) {{
         var na = parseFloat(ca.replace('%','').replace('\u2014','').replace(',','.'));
         var nb = parseFloat(cb.replace('%','').replace('\u2014','').replace(',','.'));
         if (!isNaN(na) && !isNaN(nb)) return asc ? na-nb : nb-na;
-        var fa = ca.match(/^(\d+)\/(\d+)$/), fb = cb.match(/^(\d+)\/(\d+)$/);
+        var fa = ca.match(/^(\\d+)\\/(\\d+)$/), fb = cb.match(/^(\\d+)\\/(\\d+)$/);
         if (fa && fb) {{ var va=parseInt(fa[1])/parseInt(fa[2]), vb=parseInt(fb[1])/parseInt(fb[2]); return asc ? va-vb : vb-va; }}
         return asc ? ca.localeCompare(cb) : cb.localeCompare(ca);
       }});
