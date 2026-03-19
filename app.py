@@ -2405,6 +2405,13 @@ def mecz(match_id):
 
     # Per kwarta tabela
     def q_table(druzyna):
+        # Agregaty z player_stats (brak podziału na kwarty — tylko sumy)
+        pl = [r for r in all_players if r["druzyna"]==druzyna]
+        tot_ast  = sum(r.get("ast",0) or 0 for r in pl)
+        tot_oreb = sum(r.get("oreb",0) or 0 for r in pl)
+        tot_dreb = sum(r.get("dreb",0) or 0 for r in pl)
+        tot_fin  = sum(r.get("finishes",0) or 0 for r in pl)
+
         rows = ""
         for qn in [1,2,3,4]:
             qd = next((r for r in all_stats if r["druzyna"]==druzyna and r["kwarta"]==qn), {})
@@ -2417,19 +2424,24 @@ def mecz(match_id):
                 <td>{qd.get('ftm',0)}/{qd.get('fta',0)}</td>
                 <td>{qd.get('br',0)}</td><td>{qd.get('poss',0)}</td>
                 <td>{kq['efg']}</td><td>{kq['ortg']}</td>
+                <td style="color:#aaa">—</td><td style="color:#aaa">—</td><td style="color:#aaa">—</td><td style="color:#aaa">—</td>
             </tr>"""
         sk = calc_kpi(suma_gtk if druzyna=="gtk" else suma_opp)
         sd = suma_gtk if druzyna=="gtk" else suma_opp
-        rows += f"""<tr style="background:#f0f4ff;font-weight:700">
+        rows += f"""<tr style="background:#1a2b4a;color:#fff;font-weight:700">
             <td>SUMA</td><td><b>{sd.get('pts',0)}</b></td>
             <td>{sd.get('p2m',0)}/{sd.get('p2a',0)}</td><td>{sk['p2_pct']}</td>
             <td>{sd.get('p3m',0)}/{sd.get('p3a',0)}</td><td>{sk['p3_pct']}</td>
             <td>{sd.get('ftm',0)}/{sd.get('fta',0)}</td>
             <td>{sd.get('br',0)}</td><td>{sd.get('poss',0)}</td>
             <td>{sk['efg']}</td><td>{sk['ortg']}</td>
+            <td>{tot_ast}</td><td>{tot_oreb+tot_dreb}</td><td>{tot_fin}</td><td>{sd.get('br',0)}</td>
         </tr>"""
         return f"""<div class="table-responsive"><table class="table table-hover mb-0">
-            <thead><tr><th>Q</th><th>PKT</th><th>2PM/A</th><th>2P%</th><th>3PM/A</th><th>3P%</th><th>FTM/A</th><th>BR</th><th>POSS</th><th>eFG%</th><th>ORtg</th></tr></thead>
+            <thead><tr>
+              <th>Q</th><th>PKT</th><th>2PM/A</th><th>2P%</th><th>3PM/A</th><th>3P%</th><th>FTM/A</th><th>BR</th><th>POSS</th><th>eFG%</th><th>ORtg</th>
+              <th title="Asysty">AST</th><th title="Zbiórki (OFF+DEF)">ZB</th><th title="Dobitki">DOB</th><th title="Przerwania">PRZ</th>
+            </tr></thead>
             <tbody>{rows}</tbody></table></div>"""
 
     # Zawodnicy tabela
