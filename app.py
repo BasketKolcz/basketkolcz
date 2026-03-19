@@ -1062,7 +1062,7 @@ function initSortable(tableId, skipCol) {{
         var na = parseFloat(ca.replace('%','').replace('\u2014','').replace(',','.'));
         var nb = parseFloat(cb.replace('%','').replace('\u2014','').replace(',','.'));
         if (!isNaN(na) && !isNaN(nb)) return asc ? na-nb : nb-na;
-        var fa = ca.match(/^(\\d+)\\/(\\d+)$/), fb = cb.match(/^(\\d+)\\/(\\d+)$/);
+        var fa = ca.match(/^([0-9]+)[/]([0-9]+)$/), fb = cb.match(/^([0-9]+)[/]([0-9]+)$/);
         if (fa && fb) {{ var va=parseInt(fa[1])/parseInt(fa[2]), vb=parseInt(fb[1])/parseInt(fb[2]); return asc ? va-vb : vb-va; }}
         return asc ? ca.localeCompare(cb) : cb.localeCompare(ca);
       }});
@@ -6964,5 +6964,4 @@ document.addEventListener('DOMContentLoaded', () => {{
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(debug=True)
