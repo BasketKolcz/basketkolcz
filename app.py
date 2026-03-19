@@ -12,6 +12,9 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "basketkolcz2025secret")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = False
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_NAME"] = "basketkolcz_session"
+app.config["PERMANENT_SESSION_LIFETIME"] = 86400 * 30  # 30 dni
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
 import functools, hashlib
@@ -32,6 +35,13 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
+@app.before_request
+def keep_session_alive():
+    """Odświeżaj sesję przy każdym żądaniu — zapobiega wylogowaniu."""
+    session.modified = True
+    if session.get("logged_in"):
+        session.permanent = True
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = None
@@ -40,6 +50,7 @@ def login():
         password = request.form.get("password", "")
         user = USERS.get(email)
         if user and user["password_hash"] == hashlib.sha256(password.encode()).hexdigest():
+            session.permanent = True
             session["logged_in"] = True
             session["user_name"] = user["name"]
             session["user_email"] = email
@@ -261,8 +272,8 @@ def set_setting(key, value):
 # PARSER (identyczny jak w app_v2.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
-ACTION_2PM = {"2","2+1","2+0","2D","2D+1","2D+0/1W","2D+1/1W"}
-ACTION_3PM = {"3","3+1","3+0"}
+ACTION_2PM = {"2","2+1","2+0","2+1/1W","2+0/1W","2D","2D+1","2D+0/1W","2D+1/1W"}
+ACTION_3PM = {"3","3+1","3+0","3+1/1W","3+0/1W"}
 ACTION_BR  = {"BR"}
 ACTION_F   = {"F"}
 BUCKETS    = ["0s","1-4s","5-8s","9-12s","13-16s","17-20s","21-24s"]
@@ -273,10 +284,10 @@ def extract_ft(code):
     if m: return int(m.group(1)), int(m.group(2))
     m2 = re.search(r'(\d+)/(\d+)W', code)
     if m2: return int(m2.group(1)), int(m2.group(2))
-    # Plus-one: 2+1, 3+1, 2D+1 → celny 1/1 RW
-    if re.search(r'\+1$', code): return 1, 1
-    # Plus-zero: 2+0, 3+0, 2D+0 → niecelny 0/1 RW
-    if re.search(r'\+0$', code): return 0, 1
+    # Plus-one: 2+1, 3+1, 2D+1, 2+1/1W, 3+1/1W → celny 1/1 RW
+    if re.search(r'\+1(/1W)?$', code): return 1, 1
+    # Plus-zero: 2+0, 3+0, 2D+0, 2+0/1W, 3+0/1W → niecelny 0/1 RW
+    if re.search(r'\+0(/1W)?$', code): return 0, 1
     return 0, 0
 
 def time_bucket(t):
@@ -290,7 +301,7 @@ def time_bucket(t):
 
 def parse_team_sheet(ws):
     stats = {
-        "quarter": defaultdict(lambda: {"ftm":0,"fta":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"br":0,"fd":0,"poss":0,"pts":0}),
+        "quarter": defaultdict(lambda: {"ftm":0,"fta":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"br":0,"fd":0,"poss":0,"pts":0,"d2m":0,"d2a":0,"przerw":0}),
         "players": defaultdict(lambda: {"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"fd":0,"br":0,"finishes":0,"ast":0,"oreb":0,"dreb":0}),
         "timing":  {q: {b: {"2PT":{"made":0,"miss":0},"3PT":{"made":0,"miss":0}} for b in BUCKETS} for q in [0,1,2,3,4]},
         "lineups": defaultdict(lambda: {"pts":0,"poss":0,"p2m":0,"p2a":0,"p3m":0,"p3a":0,"ftm":0,"fta":0,"br":0,"fd":0}),
@@ -372,6 +383,7 @@ def parse_team_sheet(ws):
 
             if code in ACTION_2PM:
                 q["p2m"]+=1; q["p2a"]+=1; pts=2
+                if code in ("2D","2D+0/1W","2D+1/1W"): q["d2m"]+=1; q["d2a"]+=1
                 stats["timing"][current_q][bucket]["2PT"]["made"]+=1
                 if finisher is not None:
                     stats["players"][finisher]["p2m"]+=1; stats["players"][finisher]["p2a"]+=1
@@ -380,8 +392,9 @@ def parse_team_sheet(ws):
                         stats["players"][finisher]["time_sum"] = stats["players"][finisher].get("time_sum",0) + t_val
                         stats["players"][finisher]["time_cnt"] = stats["players"][finisher].get("time_cnt",0) + 1
                     if assister is not None: stats["players"][assister]["ast"]+=1
-            elif code in ("0/2","0/2D","0D+0/2W","0D+1/2W"):
+            elif code in ("0/2","0/2D","0D+0/2W","0D+1/2W","0D+2/2W"):
                 q["p2a"]+=1
+                if code in ("0/2D","0D+0/2W","0D+1/2W","0D+2/2W"): q["d2a"]+=1
                 stats["timing"][current_q][bucket]["2PT"]["miss"]+=1
                 if finisher is not None:
                     stats["players"][finisher]["p2a"]+=1; stats["players"][finisher]["finishes"]+=1
@@ -414,6 +427,8 @@ def parse_team_sheet(ws):
                 if drebler is not None: stats["players"][drebler]["dreb"]+=1
             elif code in ACTION_F:
                 q["fd"]+=1
+            elif code == "P":
+                q["przerw"]+=1
 
             ftm, fta = extract_ft(code)
             if fta > 0:
@@ -437,7 +452,7 @@ def parse_team_sheet(ws):
                 lu["pts"]  += pts
                 if code in ACTION_2PM:
                     lu["p2m"]+=1; lu["p2a"]+=1
-                elif code in ("0/2","0/2D","0D+0/2W","0D+1/2W"):
+                elif code in ("0/2","0/2D","0D+0/2W","0D+1/2W","0D+2/2W"):
                     lu["p2a"]+=1
                 elif code in ACTION_3PM:
                     lu["p3m"]+=1; lu["p3a"]+=1
@@ -1167,14 +1182,16 @@ def index():
 # ══════════════════════════════════════════════════════════════════════════════
 
 VALID_CODES = {
-    "2","0/2","3","0/3","BR","P","F",
+    "2","0/2","3","0/3","BR","P","F","T",
+    "2+1/1W","2+0/1W","3+1/1W","3+0/1W",
+    # stare kody — zachowane dla wstecznej kompatybilnosci
     "2+1","2+0","3+1","3+0",
     "2D","0/2D","2D+1","2D+0/1W","2D+1/1W",
     "1/2W","2/2W","0/2W",
     "1/3W","2/3W","3/3W","0/3W",
     "1/2WL","2/2WL","0/2WL",
     "1/1WT","0/1WT",
-    "0D+0/2W","0D+1/2W"
+    "0D+0/2W","0D+1/2W","0D+2/2W"
 }
 
 def read_meta(wb):
@@ -1201,6 +1218,8 @@ def read_meta(wb):
                 if "rozgrywki" in key: meta["rozgrywki"] = val
                 if "runda"     in key or "kolejka" in key: meta["runda"] = val
                 if "miejsce"   in key: meta["miejsce"] = val
+                if "uwagi"     in key: meta["uwagi"] = val
+                if "nazwa pliku" in key: meta["nazwa_pliku"] = val
             break
     return meta
 
@@ -3208,6 +3227,12 @@ def mecz(match_id):
                 ("2PM/A",f"{suma_gtk.get('p2m',0)}/{suma_gtk.get('p2a',0)}",f"{suma_opp.get('p2m',0)}/{suma_opp.get('p2a',0)}","Celne / próby za 2 pkt","p2m",suma_gtk.get('p2m',0),suma_opp.get('p2m',0)),
                 ("3PM/A",f"{suma_gtk.get('p3m',0)}/{suma_gtk.get('p3a',0)}",f"{suma_opp.get('p3m',0)}/{suma_opp.get('p3a',0)}","Celne / próby za 3 pkt","p3m",suma_gtk.get('p3m',0),suma_opp.get('p3m',0)),
                 ("FTM/A",f"{suma_gtk.get('ftm',0)}/{suma_gtk.get('fta',0)}",f"{suma_opp.get('ftm',0)}/{suma_opp.get('fta',0)}","Celne / próby rzutów wolnych","ftm",suma_gtk.get('ftm',0),suma_opp.get('ftm',0)),
+                ("Dobitki (2D)",
+                 f"{suma_gtk.get('d2m',0)}/{suma_gtk.get('d2a',0)} · {suma_gtk.get('d2m',0)/suma_gtk.get('d2a',1)*100:.1f}%" if suma_gtk.get('d2a',0) else f"0/0 · -",
+                 f"{suma_opp.get('d2m',0)}/{suma_opp.get('d2a',0)} · {suma_opp.get('d2m',0)/suma_opp.get('d2a',1)*100:.1f}%" if suma_opp.get('d2a',0) else f"0/0 · -",
+                 "Celne / próby dobitek · wyższy % = lepszy","d2m",suma_gtk.get('d2m',0),suma_opp.get('d2m',0)),
+                ("Przerwania (P)",suma_gtk.get('przerw',0),suma_opp.get('przerw',0),"Liczba przerwań akcji — niższy = lepszy","przerw",
+                 suma_opp.get('przerw',0),suma_gtk.get('przerw',0)),
               ])}
             </tbody>
           </table>
@@ -6142,7 +6167,7 @@ def template_zapis():
         ("Data meczu",            ""),
         ("Rozgrywki",             ""),
         ("Runda / Kolejka",       ""),
-        ("Miejsce (dom/wyjazd)", "dom"),
+        ("Miejsce (dom/wyjazd)", ""),
         ("Wynik A",               ""),
         ("Wynik B",               ""),
         ("Uwagi",                 ""),
@@ -6157,61 +6182,82 @@ def template_zapis():
     ws_meta.cell(12, 1).font = Font(italic=True, size=9, color="555555")
 
     # ── ARKUSZ KODY ───────────────────────────────────────────────────────────
+    # (Kategoria, Kod, Opis, Punkty, Przykład/uwagi)
     KODY_DATA = [
-        ("SCORING",   "2",         "Celny za 2 punkty",               "rzut z gry za 2"),
-        ("SCORING",   "3",         "Celny za 3 punkty",               "rzut z gry za 3"),
-        ("SCORING",   "2+1",       "2 pkt + celny rzut wolny",        "faulowany i trafia RW"),
-        ("SCORING",   "2+0",       "2 pkt + niecelny rzut wolny",     "faulowany, chybia RW"),
-        ("SCORING",   "3+1",       "3 pkt + celny rzut wolny",        "faulowana trójka, trafia"),
-        ("SCORING",   "3+0",       "3 pkt + niecelny rzut wolny",     "faulowana trójka, chybia"),
-        ("SCORING",   "2D",        "Dobitka celna",                   "tip-in po chybieniu"),
-        ("SCORING",   "2D+1",      "Dobitka celna + faul (bez RW)",   ""),
-        ("SCORING",   "2D+0/1W",   "Dobitka celna + faul (0/1 RW)",   ""),
-        ("SCORING",   "2D+1/1W",   "Dobitka celna + faul (1/1 RW)",   ""),
-        ("CHYBIENIE", "0/2",       "Niecelny za 2 punkty",            "chybiony rzut z gry za 2"),
-        ("CHYBIENIE", "0/3",       "Niecelny za 3 punkty",            "chybiony rzut za 3"),
-        ("CHYBIENIE", "0/2D",      "Niecelna dobitka",                "chybiony tip-in"),
-        ("CHYBIENIE", "0D+0/2W",   "Niecelna dobitka + faul (0/2 RW)",""),
-        ("CHYBIENIE", "0D+1/2W",   "Niecelna dobitka + faul (1/2 RW)",""),
-        ("RW",        "1/2W",      "1/2 rzutów wolnych",              ""),
-        ("RW",        "2/2W",      "2/2 rzutów wolnych",              ""),
-        ("RW",        "0/2W",      "0/2 rzutów wolnych",              ""),
-        ("RW",        "1/3W",      "1/3 rzutów wolnych",              ""),
-        ("RW",        "2/3W",      "2/3 rzutów wolnych",              ""),
-        ("RW",        "3/3W",      "3/3 rzutów wolnych",              ""),
-        ("RW",        "0/3W",      "0/3 rzutów wolnych",              ""),
-        ("RW OSTATNI","1/2WL",     "1/2 RW — ostatni wolny serii",    ""),
-        ("RW OSTATNI","2/2WL",     "2/2 RW — ostatni wolny serii",    ""),
-        ("RW OSTATNI","0/2WL",     "0/2 RW — ostatni wolny serii",    ""),
-        ("RW TECH.",  "1/1WT",     "1/1 RW techniczny",               ""),
-        ("RW TECH.",  "0/1WT",     "0/1 RW techniczny",               ""),
-        ("INNE",      "BR",        "Strata / Ball Loss",              ""),
-        ("INNE",      "P",         "Przerwanie gry",                  "timeout, faul tech."),
-        ("INNE",      "F",         "Faul (bez punktów)",              ""),
+        ("SCORING",    "2",        "Celny za 2 punkty",                       2,  "rzut z gry za 2"),
+        ("SCORING",    "3",        "Celny za 3 punkty",                       3,  "rzut z gry za 3"),
+        ("SCORING",    "2+1/1W",   "2 pkt + celny rzut wolny",                3,  "faulowany i trafia RW"),
+        ("SCORING",    "2+0/1W",   "2 pkt + niecelny rzut wolny",             2,  "faulowany, chybia RW"),
+        ("SCORING",    "3+1/1W",   "3 pkt + celny rzut wolny",                4,  "faulowana trójka, trafia"),
+        ("SCORING",    "3+0/1W",   "3 pkt + niecelny rzut wolny",             3,  "faulowana trójka, chybia"),
+        ("SCORING",    "2D",       "Dobitka celna",                           2,  "tip-in po chybieniu"),
+        ("SCORING",    "2D+0/1W",  "Dobitka celna + faul (0/1 RW)",           2,  ""),
+        ("SCORING",    "2D+1/1W",  "Dobitka celna + faul (1/1 RW)",           3,  ""),
+        ("CHYBIENIE",  "0/2",      "Niecelny za 2 punkty",                    0,  "chybiony rzut z gry za 2"),
+        ("CHYBIENIE",  "0/3",      "Niecelny za 3 punkty",                    0,  "chybiony rzut za 3"),
+        ("CHYBIENIE",  "0/2D",     "Niecelna dobitka",                        0,  "chybiony tip-in"),
+        ("CHYBIENIE",  "0D+0/2W",  "Niecelna dobitka + faul (0/2 RW)",        0,  "chybiony tip-in, niecelne dwa z dwóch rzutów wolnych"),
+        ("CHYBIENIE",  "0D+1/2W",  "Niecelna dobitka + faul (1/2 RW)",        1,  "chybiony tip-in, celny jeden z dwóch rzutów wolnych"),
+        ("CHYBIENIE",  "0D+2/2W",  "Niecelna dobitka + faul (2/2 RW)",        2,  "chybiony tip-in, celny dwa z dwóch rzutów wolnych"),
+        ("RW",         "1/2W",     "1/2 rzutów wolnych",                      1,  ""),
+        ("RW",         "2/2W",     "2/2 rzutów wolnych",                      2,  ""),
+        ("RW",         "0/2W",     "0/2 rzutów wolnych",                      0,  ""),
+        ("RW",         "1/3W",     "1/3 rzutów wolnych",                      1,  ""),
+        ("RW",         "2/3W",     "2/3 rzutów wolnych",                      2,  ""),
+        ("RW",         "3/3W",     "3/3 rzutów wolnych",                      3,  ""),
+        ("RW",         "0/3W",     "0/3 rzutów wolnych",                      0,  ""),
+        ("RW Z LIMITU","1/2WL",    "1/2 RW — z limitu fauli, bez akcji rzutowej", 1, "Wykonywany gdy drużyna przeciwna ma 4 bądź więcej fauli w kwarcie."),
+        ("RW Z LIMITU","2/2WL",    "2/2 RW — z limitu fauli, bez akcji rzutowej", 2, "Wykonywany gdy drużyna przeciwna ma 4 bądź więcej fauli w kwarcie."),
+        ("RW Z LIMITU","0/2WL",    "0/2 RW — z limitu fauli, bez akcji rzutowej", 0, "Wykonywany gdy drużyna przeciwna ma 4 bądź więcej fauli w kwarcie."),
+        ("RW TECH.",   "1/1WT",    "1/1 RW techniczny",                       1,  ""),
+        ("RW TECH.",   "0/1WT",    "0/1 RW techniczny",                       0,  ""),
+        ("INNE",       "BR",       "Strata / Ball Loss",                      "-", ""),
+        ("INNE",       "P",        "Przerwanie gry",                          "-", "przerwanie akcji np. (zagranie nogą, nieudany przechwyt, przerwa grze itp.)"),
+        ("INNE",       "F",        "Faul (bez punktów)",                      "-", "faul i piłka z boku"),
+        ("INNE",       "T",        "Time-out",                                "-", "Przerwa na żądanie dla trenera"),
     ]
 
+    # Kolor dla punktów
+    PTS_GREEN = PatternFill("solid", fgColor="C8E6C9")  # zielony — punkty
+    PTS_ZERO  = PatternFill("solid", fgColor="FFEBEE")  # czerwony — 0 pkt
+    PTS_DASH  = PatternFill("solid", fgColor="F5F5F5")  # szary — brak wartości
+
     ws_k = wb.create_sheet("KODY")
-    ws_k.merge_cells("A1:E1")
+    ws_k.merge_cells("A1:F1")
     t = ws_k["A1"]; t.value = "KODY AKCJI — ściągawka"
     t.fill = HDR; t.font = HDR_F; t.alignment = CTR
     ws_k.row_dimensions[1].height = 22
 
-    for ci, (col, w, lbl) in enumerate([("A",12,"Kategoria"),("B",14,"Kod"),("C",38,"Opis"),("D",36,"Przykład/uwagi"),("E",5,"")]):
+    # Nagłówki: A=Kategoria, B=Kod, C=Opis, D=PUNKTY, E=Przykład/uwagi, F=pusty
+    for ci, (col, w, lbl) in enumerate([("A",12,"Kategoria"),("B",14,"Kod"),("C",38,"Opis"),("D",10,"PUNKTY"),("E",36,"Przykład/uwagi"),("F",5,"")]):
         ws_k.column_dimensions[col].width = w
         c = ws_k.cell(2, ci+1, lbl if lbl else "")
         c.fill = HDR; c.font = Font(color="FFFFFF", bold=True, size=9); c.alignment = CTR; c.border = BD
 
     prev_cat = ""
-    for i, (cat, kod, opis, przyklad) in enumerate(KODY_DATA):
+    for i, (cat, kod, opis, pts, przyklad) in enumerate(KODY_DATA):
         r = i + 3
         bg = PatternFill("solid", fgColor="F8F8F8") if i%2==0 else PatternFill("solid", fgColor="FFFFFF")
         cat_fill = PatternFill("solid", fgColor="E8F5E9") if cat != prev_cat else bg
-        for ci, val in enumerate([cat if cat != prev_cat else "", kod, opis, przyklad]):
+
+        # Kolumna punktów — kolor zależy od wartości
+        if pts == "-":
+            pts_fill = PTS_DASH
+        elif pts == 0:
+            pts_fill = PTS_ZERO
+        else:
+            pts_fill = PTS_GREEN
+
+        for ci, (val, fill, bold, align) in enumerate([
+            (cat if cat != prev_cat else "", cat_fill if ci==0 else bg, False, LEFT),
+            (kod,  PatternFill("solid", fgColor="FFF9C4"), True,  CTR),
+            (opis, bg, False, LEFT),
+            (pts,  pts_fill, True, CTR),
+            (przyklad, bg, False, LEFT),
+        ]):
             c = ws_k.cell(r, ci+1, val)
-            c.fill = cat_fill if ci==0 else (PatternFill("solid",fgColor="FFF9C4") if ci==1 else bg)
-            c.font = Font(bold=True, size=9) if ci==1 else Font(size=9)
-            c.alignment = CTR if ci==1 else LEFT
-            c.border = BD
+            c.fill = fill; c.font = Font(bold=bold, size=9)
+            c.alignment = align; c.border = BD
         prev_cat = cat
 
     ws_k.freeze_panes = "A3"
